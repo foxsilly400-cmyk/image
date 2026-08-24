@@ -79,6 +79,56 @@ def api_favs():
     return jsonify({"ok": True, "count": len(favs)})
 
 
+def build_upscale_workflow(p):
+    """对已生成图片二次采样：LoadImage → 像素放大 → VAEEncode → KSampler(低denoise) → 输出"""
+    base = p.get("base", {})
+    ckpt = base.get("checkpoint", "waiIllustriousSDXL_v170.safetensors")
+    loras = base.get("loras", [])
+    steps = int(p.get("steps", base.get("steps", 25)))
+    cfg = float(p.get("cfg", base.get("cfg", 7)))
+    sampler = p.get("sampler", base.get("sampler", "euler"))
+    scheduler = p.get("scheduler", base.get("scheduler", "normal"))
+    denoise = float(p.get("denoise", 0.4))
+    scale = float(p.get("scale", 1.5))
+    seed = int(p.get("seed", -1))
+    if seed < 0:
+        seed = random.randint(0, 2**31)
+    w = int(base.get("width", 1024) * scale // 8 * 8)
+    h = int(base.get("height", 1536) * scale // 8 * 8)
+
+    nodes = {
+        "src": {"class_type": "LoadImage", "inputs": {"image": p.get("src_image", "upscale_src.png")}},
+        "scale": {"class_type": "ImageScale",
+                  "inputs": {"image": ["src", 0], "upscale_method": "bicubic",
+                             "width": w, "height": h, "crop": "disabled"}},
+        "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
+    }
+    cur_model, cur_clip = ["4", 0], ["4", 1]
+    for i, l in enumerate(loras):
+        nid = f"5_{i}"
+        nodes[nid] = {"class_type": "LoraLoader",
+                      "inputs": {"model": cur_model, "clip": cur_clip,
+                                 "lora_name": l["name"],
+                                 "strength_model": float(l.get("weight", 0.8)),
+                                 "strength_clip": float(l.get("weight", 0.8))}}
+        cur_model, cur_clip = [nid, 0], [nid, 1]
+    nodes["6"] = {"class_type": "CLIPTextEncode",
+                  "inputs": {"clip": cur_clip, "text": base.get("prompt", "")}}
+    nodes["7"] = {"class_type": "CLIPTextEncode",
+                  "inputs": {"clip": cur_clip, "text": base.get("negative", "")}}
+    nodes["enc"] = {"class_type": "VAEEncode",
+                     "inputs": {"pixels": ["scale", 0], "vae": ["4", 2]}}
+    nodes["ks"] = {"class_type": "KSampler",
+                    "inputs": {"model": cur_model, "positive": ["6", 0], "negative": ["7", 0],
+                               "latent_image": ["enc", 0], "seed": seed, "steps": steps,
+                               "cfg": cfg, "sampler_name": sampler,
+                               "scheduler": scheduler, "denoise": denoise}}
+    nodes["8"] = {"class_type": "VAEDecode", "inputs": {"samples": ["ks", 0], "vae": ["4", 2]}}
+    nodes["9"] = {"class_type": "SaveImage",
+                  "inputs": {"images": ["8", 0], "filename_prefix": "up"}}
+    return nodes
+
+
 def task_worker():
     while True:
         with COND:
@@ -89,7 +139,18 @@ def task_worker():
             TASKS[tid]["status"] = "running"
             payload = TASKS[tid]["payload"]
         try:
-            wf = build_workflow(payload)
+            if payload.get("mode") == "upscale":
+                # 复制源图到 input 目录（供 LoadImage 使用）
+                src = payload.get("src_image", "upscale_src.png")
+                if ON_SERVER:
+                    import shutil
+                    out_f = os.path.join(SERVER_BASE, "output", src)
+                    in_f = os.path.join(SERVER_BASE, "input", src)
+                    if os.path.exists(out_f):
+                        shutil.copy(out_f, in_f)
+                wf = build_upscale_workflow(payload)
+            else:
+                wf = build_workflow(payload)
             resp = comfy_post("/prompt", {"prompt": wf})
             pid = resp["prompt_id"]
             # 轮询 ComfyUI 完成
@@ -110,7 +171,9 @@ def task_worker():
             with TASK_LOCK:
                 TASKS[tid]["images"] = imgs
                 TASKS[tid]["status"] = "done"
-                TASKS[tid]["seed"] = wf["10"]["inputs"]["seed"]
+                seed_node = wf.get("10", wf.get("ks"))
+                if seed_node:
+                    TASKS[tid]["seed"] = seed_node["inputs"]["seed"]
         except Exception as e:
             with TASK_LOCK:
                 TASKS[tid]["status"] = "error"
@@ -293,6 +356,49 @@ def api_generate():
     p = {**p, "prefix": f"gen_{tid}"}
     with TASK_LOCK:
         TASKS[tid] = {"status": "queued", "payload": p, "images": [],
+                      "error": None, "created": time.time()}
+    with COND:
+        TASK_ORDER.append(tid)
+        COND.notify_all()
+    return jsonify({"ok": True, "task_id": tid})
+
+
+@app.route("/api/upscale", methods=["POST"])
+def api_upscale():
+    """对已生成图片二次采样（Hires Fix 后处理）：入队"""
+    data = request.get_json(force=True)
+    fn = data.get("filename", "")
+    if not fn or ".." in fn or "/" in fn:
+        return jsonify({"ok": False, "error": "非法文件名"})
+    # 找该图所属任务的 payload 作为基础设置
+    base = None
+    with TASK_LOCK:
+        for t in TASKS.values():
+            for im in t.get("images", []):
+                if im.get("filename") == fn:
+                    base = dict(t["payload"])
+                    break
+            if base:
+                break
+    if base is None:
+        base = {"checkpoint": "waiIllustriousSDXL_v170.safetensors",
+                "loras": [], "prompt": "", "negative": "",
+                "steps": 25, "cfg": 7, "sampler": "euler", "scheduler": "normal",
+                "width": 1024, "height": 1536}
+    base.pop("mode", None)
+    payload = {"mode": "upscale", "src_image": fn,
+               "base": base,
+               "scale": float(data.get("scale", 1.5)),
+               "denoise": float(data.get("denoise", 0.4)),
+               "steps": int(data.get("steps", 25)),
+               "cfg": float(data.get("cfg", 7)),
+               "sampler": data.get("sampler", "euler"),
+               "scheduler": data.get("scheduler", "normal"),
+               "seed": int(data.get("seed", -1)),
+               "prefix": "up"}
+    tid = uuid.uuid4().hex[:12]
+    with TASK_LOCK:
+        TASKS[tid] = {"status": "queued", "payload": payload, "images": [],
                       "error": None, "created": time.time()}
     with COND:
         TASK_ORDER.append(tid)

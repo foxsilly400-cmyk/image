@@ -3,8 +3,7 @@ const LS_KEY = "***";
 const LS_FAV = "genui_favs_v1";
 
 const CONTROLS = ["ckpt", "vae", "prompt", "negative", "steps", "cfg", "sampler", "scheduler",
-                  "width", "height", "seed", "batch", "clipSkip", "enhCompat", "hires",
-                  "hiresScale", "hiresDenoise"];
+                  "width", "height", "seed", "batch", "clipSkip", "enhCompat"];
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -100,9 +99,6 @@ function collectSettings() {
     width: parseInt($("width").value), height: parseInt($("height").value),
     seed: parseInt($("seed").value), batch: parseInt($("batch").value),
     clip_skip: parseInt($("clipSkip").value) || 1,
-    hires: $("hires").checked,
-    hires_scale: parseFloat($("hiresScale").value),
-    hires_denoise: parseFloat($("hiresDenoise").value),
   };
 }
 
@@ -393,6 +389,21 @@ async function submitGen() {
 
 $("genBtn").onclick = submitGen;
 
+// 二次采样（生成后高清）
+async function upscaleImage(img) {
+  const scale = prompt("放大倍率（1.5 = 1.5x）", "1.5") || "";
+  if (!scale) return;
+  const denoise = prompt("重绘幅度（0.2-0.6，越大越偏离原图）", "0.4") || "";
+  if (!denoise) return;
+  $("status").textContent = "二次采样任务已入队...";
+  const r = await api("/api/upscale", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: img.filename, scale: parseFloat(scale), denoise: parseFloat(denoise) }),
+  });
+  if (r.ok) $("status").textContent = "高清任务 " + r.task_id + " 已入队";
+  else $("status").textContent = "失败: " + r.error;
+}
+
 // ---------- 任务列表 + 画廊 ----------
 function settingsSummary(s) {
   if (!s) return "";
@@ -476,6 +487,11 @@ async function pollTasks() {
               fav.title = "已收藏（点击取消收藏）";
             }
           };
+          const up = document.createElement("button");
+          up.className = "fav-btn up-btn";
+          up.textContent = "✨";
+          up.title = "二次采样高清（Hires Fix）";
+          up.onclick = () => upscaleImage(img);
           const del = document.createElement("button");
           del.className = "fav-btn del-btn";
           del.textContent = "🗑";
@@ -497,7 +513,7 @@ async function pollTasks() {
           dl.href = imgUrl(img);
           dl.download = "";
           dl.textContent = "下载";
-          bar.append(fav, del, dl);
+          bar.append(fav, up, del, dl);
           card.append(im, bar);
           gal.appendChild(card);
         }
