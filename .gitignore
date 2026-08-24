@@ -1,0 +1,4 @@
+__pycache__/
+upload_tmp/
+*.pyc
+.DS_Store
