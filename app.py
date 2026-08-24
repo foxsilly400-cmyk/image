@@ -52,7 +52,7 @@ def cors(resp):
     return resp
 
 
-SERVER_PUBLIC = "https://u1139344-9e22-9f4a034a.westc.seetacloud.com:8443"
+SERVER_PUBLIC = "https://u1139344-cwgd-cadc1936.weste.seetacloud.com:8443"
 
 
 @app.route("/api/favs", methods=["GET", "POST", "OPTIONS"])
