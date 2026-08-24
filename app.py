@@ -31,6 +31,33 @@ TRIGGER_CACHE = {"data": None, "ts": 0}
 # 收藏存储：放 genui 目录外（数据盘根），重新部署不影响它
 FAVS_FILE = "/root/autodl-tmp/favs.json" if ON_SERVER else os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "favs.json")
+# 任务记录持久化：重启/部署不丢历史任务
+TASKS_FILE = "/root/autodl-tmp/tasks.json" if ON_SERVER else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "tasks.json")
+
+
+def save_tasks():
+    try:
+        with open(TASKS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"order": TASK_ORDER, "tasks": TASKS}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def load_tasks():
+    global TASK_ORDER
+    try:
+        with open(TASKS_FILE, encoding="utf-8") as f:
+            d = json.load(f)
+        TASK_ORDER = [i for i in d.get("order", []) if i in d.get("tasks", {})]
+        for tid, t in d.get("tasks", {}).items():
+            if t.get("status") in ("queued", "running"):
+                t["status"] = "error"
+                t["error"] = "服务重启，任务中断"
+            TASKS[tid] = t
+        TASK_ORDER = [i for i in TASK_ORDER if TASKS[i]["status"] not in ("queued", "running")]
+    except Exception:
+        pass
 
 
 def load_favs():
@@ -180,12 +207,15 @@ def task_worker():
             with TASK_LOCK:
                 TASKS[tid]["status"] = "error"
                 TASKS[tid]["error"] = str(e)
+            save_tasks()
         with COND:
             TASK_ORDER.pop(0)
             COND.notify_all()
+        save_tasks()
 
 
 threading.Thread(target=task_worker, daemon=True).start()
+load_tasks()
 
 
 def comfy_get(path):
@@ -362,6 +392,7 @@ def api_generate():
     with COND:
         TASK_ORDER.append(tid)
         COND.notify_all()
+    save_tasks()
     return jsonify({"ok": True, "task_id": tid})
 
 
@@ -405,6 +436,7 @@ def api_upscale():
     with COND:
         TASK_ORDER.append(tid)
         COND.notify_all()
+    save_tasks()
     return jsonify({"ok": True, "task_id": tid})
 
 
@@ -480,6 +512,7 @@ def api_delete_image():
     with TASK_LOCK:
         for t in TASKS.values():
             t["images"] = [i for i in t.get("images", []) if i.get("filename") != fn]
+    save_tasks()
     return jsonify({"ok": True})
 
 

@@ -524,7 +524,7 @@ async function pollTasks() {
         }
       }
     }
-  } catch (e) { $("status").textContent = "poll error: " + e.message; }
+  } catch (e) {}
 }
 setInterval(pollTasks, 2000);
 
