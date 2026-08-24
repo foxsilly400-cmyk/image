@@ -223,6 +223,20 @@ input[type=file] { padding: 5px; font-size: 12px; }
   border-radius: 50%; cursor: pointer;
 }
 .lb-close:hover { background: rgba(255,255,255,0.15); }
+.lb-nav {
+  position: fixed; top: 50%; transform: translateY(-50%);
+  background: rgba(0,0,0,0.55); border: none; color: #fff; font-size: 34px;
+  width: 52px; height: 72px; cursor: pointer; z-index: 1001; border-radius: 8px;
+  display: none; line-height: 72px; text-align: center;
+}
+.lb-nav:hover { background: rgba(255,255,255,0.18); }
+.lb-prev { left: 12px; }
+.lb-next { right: 12px; }
+@media (max-width: 900px) {
+  .lb-nav { width: 44px; height: 56px; font-size: 28px; line-height: 56px; }
+  .lb-prev { left: 6px; }
+  .lb-next { right: 6px; }
+}
 .spinner {
   width: 18px; height: 18px; border: 2px solid var(--border);
   border-top-color: var(--accent); border-radius: 50%;

@@ -456,32 +456,37 @@ async function pollTasks() {
       }
       // 完成：每张图都展示（已删除的跳过）
       if (t.status === "done" && t.images && t.images.length) {
+        const items = [];
         for (const img of t.images) {
           if (DELETED.has(img.filename)) continue;
+          items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
+        }
+        for (let idx = 0; idx < items.length; idx++) {
+          const it = items[idx];
           const card = document.createElement("div");
           card.className = "img-card";
           const im = document.createElement("img");
-          im.src = imgUrl(img);
+          im.src = it.url;
           im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
-          im.onclick = () => openLightbox(imgUrl(img), img.filename, t.payload);
+          im.onclick = () => openLightbox(it.url, it.name, it.settings, items, idx);
           const bar = document.createElement("div");
           bar.className = "bar";
           const fav = document.createElement("button");
           fav.className = "fav-btn";
-          const isFav = getFavs().some(f => f.img.filename === img.filename);
+          const isFav = getFavs().some(f => f.img.filename === it.filename);
           fav.textContent = isFav ? "★" : "☆";
           fav.classList.toggle("on", isFav);
           fav.title = isFav ? "已收藏（点击取消收藏）" : "收藏此图的提示词和设置";
           fav.onclick = () => {
             if (isFav) {
-              const favs = getFavs().filter(f => f.img.filename !== img.filename);
+              const favs = getFavs().filter(f => f.img.filename !== it.filename);
               setFavs(favs);
               renderFavs();
               fav.textContent = "☆";
               fav.classList.remove("on");
               fav.title = "收藏此图的提示词和设置";
             } else {
-              addFav(img, t.payload || {});
+              addFav(it, t.payload || {});
               fav.textContent = "★";
               fav.classList.add("on");
               fav.title = "已收藏（点击取消收藏）";
@@ -491,7 +496,7 @@ async function pollTasks() {
           up.className = "fav-btn up-btn";
           up.textContent = "✨";
           up.title = "二次采样高清（Hires Fix）";
-          up.onclick = () => upscaleImage(img);
+          up.onclick = () => upscaleImage(it);
           const del = document.createElement("button");
           del.className = "fav-btn del-btn";
           del.textContent = "🗑";
@@ -499,12 +504,12 @@ async function pollTasks() {
           del.onclick = () => {
             if (!confirm("删除这张图片？（服务器文件将移除）")) return;
             // 先移除 UI，再异步删后台（不阻塞）
-            markDeleted(img.filename);
+            markDeleted(it.filename);
             card.remove();
             $("status").textContent = "已删除";
             api("/api/delete_image", {
               method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ filename: img.filename }),
+              body: JSON.stringify({ filename: it.filename }),
             }).then(r => {
               if (!r.ok) $("status").textContent = "后台删除失败: " + (r.error || "");
             });
@@ -523,50 +528,66 @@ async function pollTasks() {
 }
 setInterval(pollTasks, 2000);
 
-// ---------- Lightbox：大图 + 侧边信息 ----------
+// ---------- Lightbox：大图 + 侧边信息 + 左右切换 ----------
 let lbScale = 1, lbX = 0, lbY = 0, lbDrag = null;
-function openLightbox(url, name, settings) {
-  const lb = $("lightbox");
-  $("lbImg").src = url;
+let LB_ITEMS = [], LB_INDEX = 0, lbTouchX = null;
+
+function openLightbox(url, name, settings, items, index) {
+  LB_ITEMS = (items && items.length) ? items : [{ url, name, settings }];
+  LB_INDEX = Math.max(0, index || 0);
+  showLbItem();
+}
+
+function showLbItem() {
+  const it = LB_ITEMS[LB_INDEX];
+  if (!it) return;
+  $("lbImg").src = it.url;
   lbScale = 1; lbX = 0; lbY = 0;
   applyLbTransform();
   // 侧边信息面板
   const side = $("lbSide");
   side.innerHTML = "";
-  if (settings) {
-    const h = document.createElement("h4");
-    h.textContent = name || "图片信息";
-    side.appendChild(h);
+  const h = document.createElement("h4");
+  h.textContent = it.name || (LB_ITEMS.length > 1 ? `${LB_INDEX + 1}/${LB_ITEMS.length}` : "图片");
+  side.appendChild(h);
+  if (it.settings) {
     const pre = document.createElement("pre");
     pre.className = "lb-settings";
-    pre.textContent = settingsSummary(settings);
+    pre.textContent = settingsSummary(it.settings);
     side.appendChild(pre);
     const fill = document.createElement("button");
     fill.className = "btn-primary";
     fill.textContent = "📝 填入提示词及设置";
-    fill.onclick = () => { applySettings(settings); };
+    fill.onclick = () => { applySettings(it.settings); };
     side.appendChild(fill);
     const reg = document.createElement("button");
     reg.className = "btn-ghost";
     reg.textContent = "🔄 用此设置重新生成";
-    reg.onclick = () => { applySettings(settings); submitGen(); };
+    reg.onclick = () => { applySettings(it.settings); submitGen(); };
     side.appendChild(reg);
     const fav = document.createElement("button");
     fav.className = "btn-ghost";
     fav.textContent = "⭐ 收藏";
     fav.onclick = () => {
-      const img = { filename: url.split("filename=")[1].split("&")[0], subfolder: "", type: "output" };
-      addFav(img, settings);
+      const img = { filename: it.url.split("filename=")[1].split("&")[0], subfolder: "", type: "output" };
+      addFav(img, it.settings);
     };
     side.appendChild(fav);
-  } else {
-    const h = document.createElement("h4");
-    h.textContent = name || "图片信息";
-    side.appendChild(h);
   }
-  $("lbInfo").textContent = "滚轮缩放 / 拖拽移动 / Esc 关闭";
-  lb.classList.remove("hidden");
+  // 箭头显隐
+  $("lbPrev").style.display = LB_ITEMS.length > 1 ? "block" : "none";
+  $("lbNext").style.display = LB_ITEMS.length > 1 ? "block" : "none";
+  $("lbInfo").textContent = "滚轮缩放 / 拖拽移动 / ←→ 切换 / Esc 关闭";
+  $("lightbox").classList.remove("hidden");
 }
+
+function lbMove(dir) {
+  if (LB_ITEMS.length < 2) return;
+  LB_INDEX = (LB_INDEX + dir + LB_ITEMS.length) % LB_ITEMS.length;
+  showLbItem();
+}
+$("lbPrev").onclick = () => lbMove(-1);
+$("lbNext").onclick = () => lbMove(1);
 function applyLbTransform() {
   $("lbImg").style.transform = `translate(${lbX}px, ${lbY}px) scale(${lbScale})`;
 }
@@ -590,7 +611,19 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", () => lbDrag = null);
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { $("lightbox").classList.add("hidden"); $("favPanel").classList.add("hidden"); }
+  if (!$("lightbox").classList.contains("hidden")) {
+    if (e.key === "ArrowRight") lbMove(1);
+    if (e.key === "ArrowLeft") lbMove(-1);
+  }
 });
+// 触摸滑动切换（手机）
+$("lbStage").addEventListener("touchstart", e => { lbTouchX = e.touches[0].clientX; }, { passive: true });
+$("lbStage").addEventListener("touchend", e => {
+  if (lbTouchX === null) return;
+  const dx = e.changedTouches[0].clientX - lbTouchX;
+  if (Math.abs(dx) > 60) lbMove(dx < 0 ? 1 : -1);
+  lbTouchX = null;
+}, { passive: true });
 
 init();
 pollTasks();
