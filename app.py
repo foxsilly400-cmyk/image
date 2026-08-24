@@ -28,7 +28,9 @@ TASK_LOCK = threading.Lock()
 TASK_ORDER = []  # FIFO id 列表
 COND = threading.Condition()
 TRIGGER_CACHE = {"data": None, "ts": 0}
-FAVS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favs.json")
+# 收藏存储：放 genui 目录外（数据盘根），部署脚本 rm -rf genui 不会碰它
+FAVS_FILE = "/root/autodl-tmp/favs.json" if ON_SERVER else os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "favs.json")
 
 
 def load_favs():
