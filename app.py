@@ -28,6 +28,55 @@ TASK_LOCK = threading.Lock()
 TASK_ORDER = []  # FIFO id 列表
 COND = threading.Condition()
 TRIGGER_CACHE = {"data": None, "ts": 0}
+FAVS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "favs.json")
+
+
+def load_favs():
+    try:
+        with open(FAVS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_favs(favs):
+    with open(FAVS_FILE, "w", encoding="utf-8") as f:
+        json.dump(favs[:200], f, ensure_ascii=False, indent=1)
+
+
+@app.after_request
+def cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+    return resp
+
+
+SERVER_PUBLIC = "https://u1139344-9e22-9f4a034a.westc.seetacloud.com:8443"
+
+
+@app.route("/api/favs", methods=["GET", "POST", "OPTIONS"])
+def api_favs():
+    """收藏：服务器端存储（多端同步）；本地模式转发到服务器"""
+    if not ON_SERVER:
+        try:
+            if request.method == "GET":
+                with urllib.request.urlopen(SERVER_PUBLIC + "/api/favs", timeout=30) as r:
+                    return r.read()
+            data = request.get_json(force=True)
+            req = urllib.request.Request(SERVER_PUBLIC + "/api/favs",
+                                         json.dumps(data).encode(),
+                                         {"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.read()
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
+    if request.method == "GET":
+        return jsonify({"ok": True, "favs": load_favs()})
+    data = request.get_json(force=True)
+    favs = data.get("favs", [])
+    save_favs(favs)
+    return jsonify({"ok": True, "count": len(favs)})
 
 
 def task_worker():

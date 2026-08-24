@@ -19,7 +19,12 @@
   </header>
 
   <main class="layout">
-    <aside class="panel">
+    <div class="tabbar" id="tabbar">
+      <button class="tab active" data-page="gen">⚙ 生成</button>
+      <button class="tab" data-page="imgs">🖼 图片</button>
+    </div>
+
+    <aside class="panel page-gen active">
       <section class="card">
         <h3>模型</h3>
         <label>Checkpoint <select id="ckpt"></select></label>
@@ -91,7 +96,7 @@
       <div class="status" id="status"></div>
     </aside>
 
-    <section class="results">
+    <section class="results page-imgs">
       <div id="taskList" class="tasklist"></div>
       <div id="gallery" class="gallery"></div>
     </section>

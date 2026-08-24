@@ -47,12 +47,45 @@ document.querySelectorAll("textarea, input").forEach(el => {
   el.addEventListener("input", saveSettings);
 });
 
-// ---------- 收藏 ----------
-function getFavs() {
-  try { return JSON.parse(localStorage.getItem(LS_FAV)) || []; } catch (e) { return []; }
+// ---------- 收藏（服务器端存储） ----------
+let FAVS_CACHE = [];
+
+async function loadFavs() {
+  try {
+    const r = await api("/api/favs");
+    if (r.ok) {
+      FAVS_CACHE = r.favs || [];
+      // 迁移：本地旧数据合并上传（仅旧页面 origin 有）
+      let old = [];
+      try { old = JSON.parse(localStorage.getItem(LS_FAV)) || []; } catch (e) {}
+      if (old.length) {
+        const merged = [...old, ...FAVS_CACHE];
+        const seen = new Set();
+        const uniq = merged.filter(f => { const k = f.img && f.img.filename; if (!k || seen.has(k)) return false; seen.add(k); return true; });
+        FAVS_CACHE = uniq;
+        await saveFavs();
+        localStorage.removeItem(LS_FAV);
+        console.log("收藏已迁移到服务器:", uniq.length);
+      }
+      updateFavCount();
+      renderFavs();
+    }
+  } catch (e) {}
 }
-function setFavs(f) { localStorage.setItem(LS_FAV, JSON.stringify(f)); updateFavCount(); }
-function updateFavCount() { $("favCount").textContent = getFavs().length; }
+
+async function saveFavs() {
+  try {
+    await api("/api/favs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ favs: FAVS_CACHE }),
+    });
+  } catch (e) {}
+}
+
+function getFavs() { return FAVS_CACHE; }
+
+function setFavs(f) { FAVS_CACHE = f; saveFavs(); updateFavCount(); }
+function updateFavCount() { $("favCount").textContent = FAVS_CACHE.length; }
 
 function collectSettings() {
   const loras = [...document.querySelectorAll(".lora-row")].map(r => ({
@@ -81,15 +114,17 @@ function buildPayload() {
   return p;
 }
 
-function addFav(img, settings) {
-  const favs = getFavs();
-  favs.unshift({ id: Date.now().toString(36), img, settings, time: Date.now() });
-  setFavs(favs.slice(0, 100));
+async function addFav(img, settings) {
+  FAVS_CACHE.unshift({ id: Date.now().toString(36), img, settings, time: Date.now() });
+  await saveFavs();
+  updateFavCount();
   renderFavs();
 }
 
 function removeFav(id) {
-  setFavs(getFavs().filter(f => f.id !== id));
+  FAVS_CACHE = FAVS_CACHE.filter(f => f.id !== id);
+  saveFavs();
+  updateFavCount();
   renderFavs();
 }
 
@@ -329,6 +364,17 @@ function renderTriggers() {
 $("ckpt").addEventListener("change", renderTriggers);
 $("loraList").addEventListener("change", renderTriggers);
 
+// ---------- 手机端 Tab 切换 ----------
+document.querySelectorAll(".tab").forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+    t.classList.add("active");
+    const page = t.dataset.page;
+    document.querySelectorAll(".page-gen, .page-imgs").forEach(x => x.classList.remove("active"));
+    document.querySelector(`.page-${page}`).classList.add("active");
+  };
+});
+
 // ---------- 生成（队列） ----------
 async function submitGen() {
   const payload = buildPayload();
@@ -339,6 +385,10 @@ async function submitGen() {
   });
   if (!resp.ok) { $("status").textContent = "错误: " + resp.error; return; }
   $("status").textContent = "任务 " + resp.task_id + " 已入队";
+  // 移动端自动切到图片页看进度
+  if (getComputedStyle($("tabbar")).display !== "none") {
+    document.querySelector(".tab[data-page=imgs]").click();
+  }
 }
 
 $("genBtn").onclick = submitGen;
@@ -529,3 +579,4 @@ window.addEventListener("keydown", (e) => {
 init();
 pollTasks();
 refreshTriggers();
+loadFavs();
