@@ -28,7 +28,7 @@ TASK_LOCK = threading.Lock()
 TASK_ORDER = []  # FIFO id 列表
 COND = threading.Condition()
 TRIGGER_CACHE = {"data": None, "ts": 0}
-# 收藏存储：放 genui 目录外（数据盘根），部署脚本 rm -rf genui 不会碰它
+# 收藏存储：放 genui 目录外（数据盘根），重新部署不影响它
 FAVS_FILE = "/root/autodl-tmp/favs.json" if ON_SERVER else os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "favs.json")
 
@@ -473,7 +473,7 @@ def api_delete_image():
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)})
     else:
-        r = _ssh([f"rm -f {SERVER_BASE}/output/{fn}"])
+        r = _ssh([f"/root/miniconda3/bin/python -c 'import os; os.remove(\"{SERVER_BASE}/output/{fn}\")'"])
         if r.returncode != 0:
             return jsonify({"ok": False, "error": r.stderr.decode()[:200]})
     # 同步从内存任务记录中移除（防止前端轮询重新渲染）
