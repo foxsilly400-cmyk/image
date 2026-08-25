@@ -218,7 +218,10 @@ function renderFavs() {
     item.className = "fav-item";
     const im = document.createElement("img");
     im.src = imgUrl(f.img);
-    im.onclick = () => openLightbox(imgUrl(f.img), "收藏图片", f.settings);
+    const lbFound = LB_ALL.find(x => x.url === imgUrl(f.img));
+    im.onclick = () => lbFound
+      ? openLightbox(lbFound.url, lbFound.name, lbFound.settings, LB_ALL, LB_ALL.indexOf(lbFound))
+      : openLightbox(imgUrl(f.img), "收藏图片", f.settings);
     const info = document.createElement("div");
     info.className = "f-info";
     const pr = document.createElement("div");
@@ -474,6 +477,8 @@ async function upscaleImage(img) {
 }
 
 // ---------- 任务列表 + 画廊 ----------
+// 全部已完成图片（跨任务左右切换用）
+let LB_ALL = [];
 function settingsSummary(s) {
   if (!s) return "";
   const l = (s.loras || []).map(x => `${x.name.split(".")[0]}:${x.weight}`).join(", ");
@@ -493,6 +498,7 @@ async function pollTasks() {
     if (!r.ok) return;
     const gal = $("gallery");
     gal.innerHTML = "";
+    LB_ALL = [];
     const running = r.tasks.filter(t => t.status === "running" || t.status === "queued").length;
     if (running) $("status").textContent = `队列中 ${running} 个任务...`;
     for (const t of r.tasks.slice(0, 10)) {
@@ -530,6 +536,7 @@ async function pollTasks() {
           if (DELETED.has(img.filename)) continue;
           items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
         }
+        LB_ALL.push(...items);
         for (let idx = 0; idx < items.length; idx++) {
           const it = items[idx];
           const card = document.createElement("div");
@@ -537,7 +544,7 @@ async function pollTasks() {
           const im = document.createElement("img");
           im.src = it.url;
           im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
-          im.onclick = () => openLightbox(it.url, it.name, it.settings, items, idx);
+          im.onclick = () => openLightbox(it.url, it.name, it.settings, LB_ALL, LB_ALL.indexOf(it));
           const bar = document.createElement("div");
           bar.className = "bar";
           const fav = document.createElement("button");
