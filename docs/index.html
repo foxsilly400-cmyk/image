@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跑图工作台</title>
+<style>
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #1b1b2f; color: #eee; display: flex; min-height: 100vh; margin: 0; align-items: center; justify-content: center; }
+  .card { background: #262640; border: 1px solid #3a3a5c; border-radius: 14px; padding: 28px 34px; text-align: center; max-width: 420px; box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  .status { font-size: 14px; margin: 10px 0 16px; min-height: 20px; }
+  .ok { color: #7ee787; } .bad { color: #ff7b72; } .wait { color: #d29922; }
+  a.btn { display: inline-block; background: #4c5fd5; color: #fff; text-decoration: none; padding: 10px 22px; border-radius: 8px; font-size: 15px; }
+  a.btn:active { opacity: .8; }
+  .meta { font-size: 12px; color: #9a9ab8; margin-top: 14px; word-break: break-all; }
+  .countdown { font-size: 12px; color: #d29922; margin-top: 8px; min-height: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>跑图工作台</h1>
+  <div class="status wait" id="status">正在检查目标实例…</div>
+  <a class="btn" id="go" href="#">进入工作台</a>
+  <div class="countdown" id="cd"></div>
+  <div class="meta" id="meta"></div>
+</div>
+<script>
+(function () {
+  var target = '';
+  fetch('./target.json', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) {
+      target = (cfg.target || '').replace(/\/+$/, '');
+      var meta = document.getElementById('meta');
+      meta.textContent = '目标: ' + target + (cfg.updated ? '\n更新于 ' + cfg.updated : '');
+      if (!target) { show('bad', '未配置目标实例'); return; }
+      var go = document.getElementById('go');
+      go.href = target;
+      // 健康检查（genui API 带 CORS）
+      fetch(target + '/api/checkpoints', { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)); })
+        .then(function (d) {
+          show('ok', '实例在线 ✓ 模型 ' + ((d.items || []).length) + ' 个，即将跳转…');
+          countdown(3, function () { location.replace(target); });
+        })
+        .catch(function () {
+          show('bad', '目标不可达（实例可能已关机），点击按钮手动进入');
+        });
+    })
+    .catch(function () {
+      show('bad', '读取 target.json 失败');
+    });
+
+  function show(cls, text) {
+    var el = document.getElementById('status');
+    el.className = 'status ' + cls;
+    el.textContent = text;
+  }
+  function countdown(n, done) {
+    var el = document.getElementById('cd');
+    el.textContent = n + ' 秒后自动进入';
+    if (n <= 1) { el.textContent = ''; done(); return; }
+    setTimeout(function () { countdown(n - 1, done); }, 1000);
+  }
+})();
+</script>
+</body>
+</html>
