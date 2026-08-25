@@ -151,12 +151,69 @@ function markDeleted(fn) {
   sessionStorage.setItem("genui_deleted", JSON.stringify([...DELETED]));
 }
 
+// 收藏：滑动式翻页（每页按面板高度自适应条数，◀ ▶ 圆点 + 触摸滑动）
+let FAV_PAGE = 0, FAV_PER = 5;
+let favTouchX = null;
+
+function favPerPage() {
+  const list = $("favList");
+  const h = list.clientHeight || 320;
+  return Math.max(1, Math.floor((h - 12) / 84));
+}
+
 function renderFavs() {
   const list = $("favList");
   const favs = getFavs();
+  if (!favs.length) {
+    list.innerHTML = '<div class="hint" style="padding:10px">还没有收藏</div>';
+    return;
+  }
+  FAV_PER = favPerPage();
+  const pages = Math.max(1, Math.ceil(favs.length / FAV_PER));
+  if (FAV_PAGE >= pages) FAV_PAGE = pages - 1;
+  const start = FAV_PAGE * FAV_PER;
+  const pageItems = favs.slice(start, start + FAV_PER);
+
   list.innerHTML = "";
-  if (!favs.length) { list.innerHTML = '<div class="hint" style="padding:10px">还没有收藏</div>'; return; }
-  for (const f of favs) {
+  const stage = document.createElement("div");
+  stage.className = "fav-stage";
+  const track = document.createElement("div");
+  track.className = "fav-track";
+  stage.appendChild(track);
+  list.appendChild(stage);
+
+  // 导航：◀ 圆点 ▶
+  const nav = document.createElement("div");
+  nav.className = "fav-nav";
+  const prev = document.createElement("button");
+  prev.textContent = "◀";
+  prev.disabled = FAV_PAGE <= 0;
+  prev.onclick = () => { FAV_PAGE--; renderFavs(); };
+  const dots = document.createElement("div");
+  dots.className = "fav-dots";
+  for (let i = 0; i < pages; i++) {
+    const d = document.createElement("span");
+    d.className = "fav-dot" + (i === FAV_PAGE ? " on" : "");
+    d.title = "第 " + (i + 1) + " 页";
+    d.onclick = () => { FAV_PAGE = i; renderFavs(); };
+    dots.appendChild(d);
+  }
+  const next = document.createElement("button");
+  next.textContent = "▶";
+  next.disabled = FAV_PAGE >= pages - 1;
+  next.onclick = () => { FAV_PAGE++; renderFavs(); };
+  nav.append(prev, dots, next);
+  list.appendChild(nav);
+
+  // 滑动入场动画
+  track.style.transition = "none";
+  track.style.transform = "translateX(28px)";
+  requestAnimationFrame(() => {
+    track.style.transition = "transform .22s ease";
+    track.style.transform = "translateX(0)";
+  });
+
+  for (const f of pageItems) {
     const item = document.createElement("div");
     item.className = "fav-item";
     const im = document.createElement("img");
@@ -182,9 +239,21 @@ function renderFavs() {
     acts.append(b1, b2, b3);
     info.append(pr, acts);
     item.append(im, info);
-    list.appendChild(item);
+    track.appendChild(item);
   }
 }
+
+// 触摸左右滑动翻页（事件委托，favList 内容会重建）
+$("favList").addEventListener("touchstart", e => { favTouchX = e.touches[0].clientX; }, { passive: true });
+$("favList").addEventListener("touchend", e => {
+  if (favTouchX === null) return;
+  const dx = e.changedTouches[0].clientX - favTouchX;
+  if (Math.abs(dx) > 50) {
+    if (dx < 0) FAV_PAGE++; else FAV_PAGE--;
+    renderFavs();
+  }
+  favTouchX = null;
+}, { passive: true });
 
 $("favBtn").onclick = () => {
   renderFavs();
@@ -515,7 +584,7 @@ async function pollTasks() {
             });
           };
           const dl = document.createElement("a");
-          dl.href = imgUrl(img);
+          dl.href = imgUrl(it);
           dl.download = "";
           dl.textContent = "下载";
           bar.append(fav, up, del, dl);
@@ -524,7 +593,7 @@ async function pollTasks() {
         }
       }
     }
-  } catch (e) { $("status").textContent = "poll error: " + e.message; }
+  } catch (e) { $("status").textContent = "poll error: " + (e.stack || e.message); }
 }
 setInterval(pollTasks, 2000);
 
