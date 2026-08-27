@@ -111,11 +111,10 @@ def api_favs():
 
 NEG_ENHANCE = [
     "(text:1.5)", "(watermark:1.5)", "(signature:1.5)", "(logo:1.4)",
-    "(caption:1.4)", "(letter:1.4)", "(speech bubble:1.4)", "(sound effect:1.4)",
-    "(japanese text:1.4)", "(typography:1.4)",
+    "(caption:1.4)", "(letter:1.4)", "(sound effect:1.4)",
 ]
-# 注意：CLIP 只有 77 token 上限，负面词过长会被截断（后段全部丢弃）。
-# 词库精简为核心项并按重要性排序，宁可少也要保证进得了前 77 token。
+# 注意：CLIP 77 token 上限（约 300 字符），负面词超长会整体异常（实测全白/色彩损坏）。
+# 用户负面词 + 此词库必须控制在 ~300 字符内，所以词库只保留最核心的 7 项。
 
 
 BRACKET_PAT = re.compile(r"\(+[^()]*?\)+")
@@ -214,9 +213,12 @@ def api_nl2tags():
 
 
 def enhance_negative(neg: str) -> str:
-    """加强负面词：保留用户输入，追加带权重的文字/水印屏蔽词库"""
+    """加强负面词：保留用户输入，追加带权重的文字/水印屏蔽词库（已在负面词中的项不重复追加）。"""
     parts = [neg.strip()] if neg and neg.strip() else []
-    parts.extend(NEG_ENHANCE)
+    for item in NEG_ENHANCE:
+        tag = item.split(":")[0].lstrip("(")
+        if tag not in neg:
+            parts.append(item)
     return ", ".join(parts)
 
 
