@@ -86,6 +86,8 @@ function getFavs() { return FAVS_CACHE; }
 function setFavs(f) { FAVS_CACHE = f; saveFavs(); updateFavCount(); }
 function updateFavCount() { $("favCount").textContent = FAVS_CACHE.length; }
 
+let REF_IMAGE = "";  // 已上传的 img2img 参考图文件名
+
 function collectSettings() {
   const loras = [...document.querySelectorAll(".lora-row")].map(r => ({
     name: r.querySelector("select").value,
@@ -99,6 +101,8 @@ function collectSettings() {
     width: parseInt($("width").value), height: parseInt($("height").value),
     seed: parseInt($("seed").value), batch: parseInt($("batch").value),
     clip_skip: parseInt($("clipSkip").value) || 1,
+    src_image: ($("i2iOn").checked && REF_IMAGE) ? REF_IMAGE : "",
+    denoise: parseFloat($("denoise").value),
   };
 }
 
@@ -460,6 +464,111 @@ async function submitGen() {
 }
 
 $("genBtn").onclick = submitGen;
+
+// ---------- tag 联想 ----------
+let suggestTimer = null;
+let suggestItems = [];
+let suggestIdx = -1;
+const promptEl = $("prompt");
+const suggestBox = document.createElement("div");
+suggestBox.id = "suggestBox";
+suggestBox.style.cssText = "position:absolute;z-index:99;background:#26263d;border:1px solid #444;border-radius:8px;max-height:220px;overflow-y:auto;display:none;min-width:260px;font-size:13px";
+promptEl.parentElement.style.position = "relative";
+promptEl.parentElement.appendChild(suggestBox);
+
+function currentTag() {
+  const v = promptEl.value;
+  const pos = promptEl.selectionStart ?? v.length;
+  const before = v.slice(0, pos);
+  const parts = before.split(",");
+  const cur = parts[parts.length - 1];
+  return { cur: cur.trim(), start: pos - cur.length };
+}
+
+async function fetchSuggest() {
+  const { cur } = currentTag();
+  if (!cur || cur.length < 1 || /[()]/.test(cur)) {
+    suggestBox.style.display = "none";
+    return;
+  }
+  try {
+    const resp = await fetch("/api/tag_suggest?q=" + encodeURIComponent(cur));
+    const j = await resp.json();
+    suggestItems = j.items || [];
+    suggestIdx = -1;
+    if (!suggestItems.length) { suggestBox.style.display = "none"; return; }
+    suggestBox.innerHTML = "";
+    suggestItems.forEach((t, i) => {
+      const d = document.createElement("div");
+      d.textContent = t;
+      d.style.cssText = "padding:5px 10px;cursor:pointer;white-space:nowrap";
+      d.onmouseenter = () => { suggestIdx = i; paintSuggest(); };
+      d.onclick = () => pickSuggest(i);
+      suggestBox.appendChild(d);
+    });
+    paintSuggest();
+    const r = promptEl.getBoundingClientRect();
+    suggestBox.style.left = "0px";
+    suggestBox.style.top = r.height + 4 + "px";
+    suggestBox.style.display = "block";
+  } catch (e) {
+    suggestBox.style.display = "none";
+  }
+}
+
+function paintSuggest() {
+  [...suggestBox.children].forEach((d, i) => {
+    d.style.background = i === suggestIdx ? "#3a3a5c" : "transparent";
+  });
+}
+
+function pickSuggest(i) {
+  if (i < 0 || i >= suggestItems.length) return;
+  const { cur, start } = currentTag();
+  const v = promptEl.value;
+  const after = v.slice(start + cur.length);
+  promptEl.value = v.slice(0, start) + suggestItems[i] + (after.startsWith(",") ? after : ", " + after);
+  const np = start + suggestItems[i].length + 1;
+  promptEl.setSelectionRange(np, np);
+  suggestBox.style.display = "none";
+  promptEl.focus();
+}
+
+promptEl.addEventListener("input", () => {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(fetchSuggest, 200);
+});
+promptEl.addEventListener("keydown", (e) => {
+  if (suggestBox.style.display === "none") return;
+  if (e.key === "ArrowDown") { e.preventDefault(); suggestIdx = (suggestIdx + 1) % suggestItems.length; paintSuggest(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); suggestIdx = (suggestIdx - 1 + suggestItems.length) % suggestItems.length; paintSuggest(); }
+  else if (e.key === "Enter" && suggestIdx >= 0) { e.preventDefault(); pickSuggest(suggestIdx); }
+  else if (e.key === "Escape") { suggestBox.style.display = "none"; }
+});
+document.addEventListener("click", (e) => {
+  if (!suggestBox.contains(e.target) && e.target !== promptEl) suggestBox.style.display = "none";
+});
+
+// ---------- img2img 参考图上传 ----------
+$("refFile").addEventListener("change", async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append("file", f);
+  $("status").textContent = "上传参考图...";
+  try {
+    const resp = await fetch("/api/upload", { method: "POST", body: fd });
+    const j = await resp.json();
+    if (!j.ok) { $("status").textContent = "上传失败: " + j.error; return; }
+    REF_IMAGE = j.name;
+    $("refName").textContent = j.name;
+    $("refPreview").src = URL.createObjectURL(f);
+    $("refPreview").style.display = "block";
+    $("status").textContent = "参考图已上传: " + j.name;
+  } catch (err) {
+    $("status").textContent = "上传失败: " + err;
+  }
+});
 
 // 二次采样（生成后高清）
 async function upscaleImage(img) {

@@ -2,6 +2,7 @@
 import json
 import os
 import random
+import re
 import subprocess
 import threading
 import time
@@ -121,6 +122,60 @@ NEG_ENHANCE = [
 ]
 
 
+BRACKET_PAT = re.compile(r"\(+[^()]*?\)+")
+
+
+def convert_weight_brackets(text):
+    """把 (((tag))) 括号圈数转换为 ComfyUI 权重语法 (tag:1.1^n)。
+    正面词：圈数越多权重越高；负面词同样（负面里权重高 = 更强抑制）。
+    已带 : 权重语法的括号组跳过。"""
+    if not text:
+        return text
+
+    def repl(m):
+        s = m.group(0)
+        inner = s.strip("()")
+        if not inner or ":" in inner:
+            return s
+        n = min(len(s) - len(s.lstrip("(")), len(s) - len(s.rstrip(")")))
+        w = round(1.1 ** n, 3)
+        return "(%s:%.3f)" % (inner.strip(), w)
+
+    return BRACKET_PAT.sub(repl, text)
+
+
+TAGS_CACHE = None
+TAGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tags.csv")
+
+
+def load_tags():
+    global TAGS_CACHE
+    if TAGS_CACHE is not None:
+        return TAGS_CACHE
+    tags = []
+    if os.path.exists(TAGS_PATH):
+        import csv as _csv
+        with open(TAGS_PATH, encoding="utf-8") as f:
+            rd = _csv.reader(f)
+            next(rd, None)
+            for row in rd:
+                if len(row) >= 2 and row[1].strip():
+                    tags.append(row[1].strip())
+    TAGS_CACHE = tags
+    return tags
+
+
+@app.route("/api/tag_suggest")
+def api_tag_suggest():
+    q = request.args.get("q", "").strip().lower()
+    tags = load_tags()
+    if not q:
+        return jsonify({"ok": True, "items": []})
+    pref = [t for t in tags if t.lower().startswith(q)][:12]
+    sub = [t for t in tags if q in t.lower() and t not in pref][:12]
+    return jsonify({"ok": True, "items": pref + sub})
+
+
 def enhance_negative(neg: str) -> str:
     """加强负面词：保留用户输入，追加带权重的文字/水印屏蔽词库"""
     parts = [neg.strip()] if neg and neg.strip() else []
@@ -162,9 +217,9 @@ def build_upscale_workflow(p):
                                  "strength_clip": float(l.get("weight", 0.8))}}
         cur_model, cur_clip = [nid, 0], [nid, 1]
     nodes["6"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": cur_clip, "text": base.get("prompt", "")}}
+                  "inputs": {"clip": cur_clip, "text": convert_weight_brackets(base.get("prompt", ""))}}
     nodes["7"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": cur_clip, "text": enhance_negative(base.get("negative", ""))}}
+                  "inputs": {"clip": cur_clip, "text": convert_weight_brackets(enhance_negative(base.get("negative", "")))}}
     nodes["enc"] = {"class_type": "VAEEncode",
                      "inputs": {"pixels": ["scale", 0], "vae": ["4", 2]}}
     nodes["ks"] = {"class_type": "KSampler",
@@ -325,6 +380,8 @@ def build_workflow(p):
     hires_scale = float(p.get("hires_scale", 1.5))
     hires_denoise = float(p.get("hires_denoise", 0.4))
     cn = p.get("controlnet")  # {enabled, image, model, strength} or None
+    src_image = p.get("src_image")
+    denoise = float(p.get("denoise", 0.5))
 
     nodes = {
         "4": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": ckpt}},
@@ -353,8 +410,8 @@ def build_workflow(p):
         nodes["vae"] = {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}}
         vae_ref = ["vae", 0]
 
-    pos = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": p["prompt"]}}
-    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": enhance_negative(p.get("negative", ""))}}
+    pos = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": convert_weight_brackets(p["prompt"])}}
+    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": convert_weight_brackets(enhance_negative(p.get("negative", "")))}}
     nodes["6"], nodes["7"] = pos, neg
 
     # ControlNet
@@ -372,10 +429,17 @@ def build_workflow(p):
 
     nodes["3"] = {"class_type": "EmptyLatentImage",
                   "inputs": {"width": width, "height": height, "batch_size": batch}}
+    latent_ref, ks_denoise = ["3", 0], 1.0
+    # img2img：参考图编码为 latent，用 denoise 控制重绘幅度
+    if src_image:
+        nodes["src"] = {"class_type": "LoadImage", "inputs": {"image": src_image}}
+        nodes["enc"] = {"class_type": "VAEEncode",
+                         "inputs": {"pixels": ["src", 0], "vae": vae_ref}}
+        latent_ref, ks_denoise = ["enc", 0], denoise
     nodes["10"] = {"class_type": "KSampler",
                    "inputs": {"model": cur_model, "positive": pos_ref, "negative": neg_ref,
-                              "latent_image": ["3", 0], "seed": seed, "steps": steps, "cfg": cfg,
-                              "sampler_name": sampler, "scheduler": scheduler, "denoise": 1}}
+                              "latent_image": latent_ref, "seed": seed, "steps": steps, "cfg": cfg,
+                              "sampler_name": sampler, "scheduler": scheduler, "denoise": ks_denoise}}
 
     # Hires fix：潜空间放大 + 二次采样
     samp_ref = ["10", 0]
