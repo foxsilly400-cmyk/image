@@ -108,6 +108,26 @@ def api_favs():
     return jsonify({"ok": True, "count": len(favs)})
 
 
+NEG_ENHANCE = [
+    "(text:1.5)", "(watermark:1.5)", "(signature:1.5)", "(logo:1.5)",
+    "(letter:1.4)", "(caption:1.4)", "(subtitles:1.4)", "(ui:1.4)",
+    "(border:1.4)", "(frame:1.4)", "(speech bubble:1.4)", "(dialogue:1.4)",
+    "(sound effect:1.4)", "(sfx:1.4)", "(japanese text:1.4)", "(english text:1.4)",
+    "(typography:1.4)", "(kana:1.4)", "(kanji:1.4)", "(katakana:1.4)", "(hiragana:1.4)",
+    "(words:1.3)", "(writing:1.3)", "(font:1.3)", "(label:1.3)", "(slogan:1.3)",
+    "(title:1.3)", "(header:1.3)", "(footer:1.3)", "(menu:1.3)", "(icons:1.3)",
+    "(number:1.3)", "(timestamp:1.3)", "(date:1.3)", "(url:1.3)", "(email:1.3)",
+    "(barcode:1.3)", "(qr code:1.3)",
+]
+
+
+def enhance_negative(neg: str) -> str:
+    """加强负面词：保留用户输入，追加带权重的文字/水印屏蔽词库"""
+    parts = [neg.strip()] if neg and neg.strip() else []
+    parts.extend(NEG_ENHANCE)
+    return ", ".join(parts)
+
+
 def build_upscale_workflow(p):
     """对已生成图片二次采样：LoadImage → 像素放大 → VAEEncode → KSampler(低denoise) → 输出"""
     base = p.get("base", {})
@@ -144,7 +164,7 @@ def build_upscale_workflow(p):
     nodes["6"] = {"class_type": "CLIPTextEncode",
                   "inputs": {"clip": cur_clip, "text": base.get("prompt", "")}}
     nodes["7"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": cur_clip, "text": base.get("negative", "")}}
+                  "inputs": {"clip": cur_clip, "text": enhance_negative(base.get("negative", ""))}}
     nodes["enc"] = {"class_type": "VAEEncode",
                      "inputs": {"pixels": ["scale", 0], "vae": ["4", 2]}}
     nodes["ks"] = {"class_type": "KSampler",
@@ -334,7 +354,7 @@ def build_workflow(p):
         vae_ref = ["vae", 0]
 
     pos = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": p["prompt"]}}
-    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": p.get("negative", "")}}
+    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": enhance_negative(p.get("negative", ""))}}
     nodes["6"], nodes["7"] = pos, neg
 
     # ControlNet
