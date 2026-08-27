@@ -508,8 +508,13 @@ async function fetchSuggest() {
     });
     paintSuggest();
     const r = promptEl.getBoundingClientRect();
-    suggestBox.style.left = "0px";
-    suggestBox.style.top = r.height + 4 + "px";
+    suggestBox.style.position = "fixed";
+    suggestBox.style.left = r.left + "px";
+    suggestBox.style.width = Math.max(r.width, 260) + "px";
+    const h = Math.min(220, suggestBox.scrollHeight) + 8;
+    let top = r.bottom + 4;
+    if (top + h > window.innerHeight) top = Math.max(4, r.top - h - 4);
+    suggestBox.style.top = top + "px";
     suggestBox.style.display = "block";
   } catch (e) {
     suggestBox.style.display = "none";
