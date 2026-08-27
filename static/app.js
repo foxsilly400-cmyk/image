@@ -858,6 +858,7 @@ async function detectIssues(settings, url) {
   const tagCount = prompt.split(",").filter(t => t.trim()).length;
   // 参数规则
   if (cfg >= 7) issues.push({ kind: "saturation", label: "🎨 颜色过饱和（CFG " + cfg + " 偏高）", fixedMsg: "已降低 CFG 并加入去饱和负面词" });
+  if ((settings.negative || "").length > 300) issues.push({ kind: "neglen", label: "⚠ 负面词过长（" + (settings.negative || "").length + " 字符，超出部分会被 CLIP 截断失效）", fixedMsg: "已精简负面词到安全长度" });
   if (tagCount > 25) issues.push({ kind: "chaos", label: "🌪 内容混乱（提示词 " + tagCount + " 项过多）", fixedMsg: "已降 CFG 提 Steps 加构图负面词，提示词建议精简" });
   else if (cfg >= 8) issues.push({ kind: "chaos", label: "🌪 内容混乱（CFG 过高烧图）", fixedMsg: "已降 CFG 提 Steps 加构图负面词" });
   if (steps < 20) issues.push({ kind: "quality", label: "🛠 细节不足（Steps 仅 " + steps + "）", fixedMsg: "已提高 Steps" });
@@ -883,6 +884,10 @@ function applyIssueFix(kind) {
     add("(cluttered composition:1.3), (melted:1.3), (jumbled features:1.3), (duplicate:1.2), (multiple heads:1.2)");
   } else if (kind === "quality") {
     $("steps").value = Math.max(curSteps, 30);
+  } else if (kind === "neglen") {
+    // 负面词超长：保留前 300 字符，去掉被截断风险的后半段
+    const nv = $("negative").value;
+    if (nv.length > 300) $("negative").value = nv.slice(0, 300);
   }
   $("negative").value = neg;
 }
