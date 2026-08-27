@@ -126,9 +126,10 @@ BRACKET_PAT = re.compile(r"\(+[^()]*?\)+")
 
 
 def convert_weight_brackets(text):
-    """把 (((tag))) 括号圈数转换为 ComfyUI 权重语法 (tag:1.1^n)。
+    """把 (((tag))) 括号圈数转换为 ComfyUI 权重语法 (tag:1.05^n)。
     正面词：圈数越多权重越高；负面词同样（负面里权重高 = 更强抑制）。
-    已带 : 权重语法的括号组跳过。"""
+    已带 : 权重语法的括号组跳过。倍率用 1.05 而非 1.1：
+    角色 tag 权重过高（1.331）会拉爆色彩饱和度和画面密度（实测教训）。"""
     if not text:
         return text
 
@@ -138,7 +139,7 @@ def convert_weight_brackets(text):
         if not inner or ":" in inner:
             return s
         n = min(len(s) - len(s.lstrip("(")), len(s) - len(s.rstrip(")")))
-        w = round(1.1 ** n, 3)
+        w = round(1.05 ** n, 3)
         return "(%s:%.3f)" % (inner.strip(), w)
 
     return BRACKET_PAT.sub(repl, text)
