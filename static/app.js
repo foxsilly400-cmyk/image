@@ -631,9 +631,13 @@ async function pollTasks() {
     LB_ALL = [];
     const running = r.tasks.filter(t => t.status === "running" || t.status === "queued").length;
     if (running) $("status").textContent = `队列中 ${running} 个任务...`;
-    for (const t of r.tasks.slice(0, 10)) {
+    let shown = 0;
+    const LIMIT = 30;
+    for (const t of r.tasks) {
+      if (shown >= LIMIT) break;
       // 进行中的任务：占位卡
       if (t.status === "queued" || t.status === "running") {
+        shown++;
         const card = document.createElement("div");
         card.className = "img-card pending";
         const ph = document.createElement("div");
@@ -650,6 +654,7 @@ async function pollTasks() {
         continue;
       }
       if (t.status === "error") {
+        shown++;
         const card = document.createElement("div");
         card.className = "img-card error";
         const ph = document.createElement("div");
@@ -659,7 +664,7 @@ async function pollTasks() {
         gal.appendChild(card);
         continue;
       }
-      // 完成：每张图都展示（已删除的跳过）
+      // 完成：每张图都展示（已删除/无图的跳过）
       if (t.status === "done" && t.images && t.images.length) {
         const items = [];
         for (const img of t.images) {
@@ -669,6 +674,7 @@ async function pollTasks() {
         LB_ALL.push(...items);
         for (let idx = 0; idx < items.length; idx++) {
           const it = items[idx];
+          shown++;
           const card = document.createElement("div");
           card.className = "img-card";
           const im = document.createElement("img");
