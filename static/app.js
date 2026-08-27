@@ -779,6 +779,28 @@ function showLbItem() {
       addFav(img, it.settings);
     };
     side.appendChild(fav);
+    // 问题检测（参数 + 图像分析），点击修复并调参
+    detectIssues(it.settings, it.url).then(issues => {
+      if (!issues.length) return;
+      const box = document.createElement("div");
+      box.className = "lb-issues";
+      const th = document.createElement("div");
+      th.className = "lb-issues-title";
+      th.textContent = "⚠ 检测到的问题（点击自动修复）";
+      box.appendChild(th);
+      issues.forEach(iss => {
+        const b = document.createElement("button");
+        b.className = "issue-btn";
+        b.textContent = iss.label;
+        b.onclick = () => {
+          applyIssueFix(iss.kind);
+          $("lightbox").classList.add("hidden");
+          $("status").textContent = iss.fixedMsg + "，可直接重新生成";
+        };
+        box.appendChild(b);
+      });
+      side.appendChild(box);
+    });
   }
   // 箭头显隐
   $("lbPrev").style.display = LB_ITEMS.length > 1 ? "block" : "none";
@@ -791,6 +813,72 @@ function lbMove(dir) {
   if (LB_ITEMS.length < 2) return;
   LB_INDEX = (LB_INDEX + dir + LB_ITEMS.length) % LB_ITEMS.length;
   showLbItem();
+}
+
+// ---------- 生成问题检测与一键修复 ----------
+function imgSaturation(url) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas");
+        const s = 64;
+        c.width = s; c.height = s;
+        const ctx = c.getContext("2d");
+        ctx.drawImage(img, 0, 0, s, s);
+        const d = ctx.getImageData(0, 0, s, s).data;
+        let sum = 0, n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i] / 255, g = d[i + 1] / 255, b = d[i + 2] / 255;
+          const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          if (mx > 0.05) sum += (mx - mn) / mx;
+          n++;
+        }
+        resolve(sum / Math.max(1, n));
+      } catch (e) { resolve(-1); }
+    };
+    img.onerror = () => resolve(-1);
+    img.src = url;
+  });
+}
+
+async function detectIssues(settings, url) {
+  const issues = [];
+  if (!settings) return issues;
+  const cfg = parseFloat(settings.cfg) || 7;
+  const steps = parseInt(settings.steps) || 28;
+  const prompt = settings.prompt || "";
+  const tagCount = prompt.split(",").filter(t => t.trim()).length;
+  // 参数规则
+  if (cfg >= 7) issues.push({ kind: "saturation", label: "🎨 颜色过饱和（CFG " + cfg + " 偏高）", fixedMsg: "已降低 CFG 并加入去饱和负面词" });
+  if (tagCount > 25) issues.push({ kind: "chaos", label: "🌪 内容混乱（提示词 " + tagCount + " 项过多）", fixedMsg: "已降 CFG 提 Steps 加构图负面词，提示词建议精简" });
+  else if (cfg >= 8) issues.push({ kind: "chaos", label: "🌪 内容混乱（CFG 过高烧图）", fixedMsg: "已降 CFG 提 Steps 加构图负面词" });
+  if (steps < 20) issues.push({ kind: "quality", label: "🛠 细节不足（Steps 仅 " + steps + "）", fixedMsg: "已提高 Steps" });
+  // 图像饱和度实测（白底头像类图排除，饱和度过高才报）
+  const sat = await imgSaturation(url);
+  if (sat > 0.62) issues.push({ kind: "saturation", label: "🎨 颜色过饱和（实测饱和度 " + sat.toFixed(2) + "）", fixedMsg: "已降低 CFG 并加入去饱和负面词" });
+  // 去重
+  const seen = new Set();
+  return issues.filter(i => { if (seen.has(i.kind)) return false; seen.add(i.kind); return true; }).slice(0, 3);
+}
+
+function applyIssueFix(kind) {
+  const curCfg = parseFloat($("cfg").value) || 7;
+  const curSteps = parseInt($("steps").value) || 28;
+  let neg = $("negative").value.trim();
+  const add = (s) => { neg = neg ? neg + ", " + s : s; };
+  if (kind === "saturation") {
+    $("cfg").value = Math.max(4, Math.round((curCfg - 1.5) * 10) / 10);
+    add("(over-saturated colors:1.3), (oversaturation:1.3), (high contrast:1.2), (harsh lighting:1.2)");
+  } else if (kind === "chaos") {
+    $("cfg").value = Math.max(4.5, Math.round((curCfg - 1) * 10) / 10);
+    $("steps").value = Math.max(curSteps, 32);
+    add("(cluttered composition:1.3), (melted:1.3), (jumbled features:1.3), (duplicate:1.2), (multiple heads:1.2)");
+  } else if (kind === "quality") {
+    $("steps").value = Math.max(curSteps, 30);
+  }
+  $("negative").value = neg;
 }
 $("lbPrev").onclick = () => lbMove(-1);
 $("lbNext").onclick = () => lbMove(1);

@@ -370,3 +370,8 @@ input[type=file] { padding: 6px; font-size: 12px; }
   animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.lb-issues { margin-top: 10px; padding: 8px; border: 1px solid #b8860b55; border-radius: 8px; background: #2a241855; }
+.lb-issues-title { font-size: 12px; color: #d4a94e; margin-bottom: 6px; }
+.issue-btn { display: block; width: 100%; margin: 4px 0; padding: 6px 10px; text-align: left; border: 1px solid #b8860b88; border-radius: 6px; background: #3a2f16; color: #f0d48a; cursor: pointer; font-size: 13px; }
+.issue-btn:hover { background: #4d3d1c; }
