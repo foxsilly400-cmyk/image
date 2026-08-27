@@ -199,8 +199,10 @@ def api_nl2tags():
     try:
         model, tok = _load_nl()
         sys_prompt = ("把用户的画面描述转换为逗号分隔的英文 danbooru 标签列表。"
-                      "只输出标签列表本身，不要任何解释。多词标签用下划线连接。"
-                      "例：'绿发女孩穿着连衣裙微笑' -> 1girl, green hair, dress, smile")
+                      "对必须出现的核心画面要素（主体人物、显著外貌特征、核心表情/动作/服装）用双重括号包裹，"
+                      "例如 ((1girl))、((green hair))、((smile))、((dress))；"
+                      "背景氛围等次要要素不加括号。只输出标签列表本身，不要任何解释。"
+                      "例：'绿发女孩穿着连衣裙微笑' -> ((1girl)), ((green hair)), dress, ((smile))")
         prompt_text = tok.apply_chat_template(
             [{"role": "system", "content": sys_prompt}, {"role": "user", "content": text}],
             tokenize=False, add_generation_prompt=True)
