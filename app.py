@@ -256,9 +256,9 @@ def build_upscale_workflow(p):
                                  "strength_clip": float(l.get("weight", 0.8))}}
         cur_model, cur_clip = [nid, 0], [nid, 1]
     nodes["6"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": cur_clip, "text": convert_weight_brackets(base.get("prompt", ""))}}
+                  "inputs": {"clip": cur_clip, "text": base.get("prompt", "")}}
     nodes["7"] = {"class_type": "CLIPTextEncode",
-                  "inputs": {"clip": cur_clip, "text": convert_weight_brackets(enhance_negative(base.get("negative", "")))}}
+                  "inputs": {"clip": cur_clip, "text": enhance_negative(base.get("negative", ""))}}
     nodes["enc"] = {"class_type": "VAEEncode",
                      "inputs": {"pixels": ["scale", 0], "vae": ["4", 2]}}
     nodes["ks"] = {"class_type": "KSampler",
@@ -449,8 +449,8 @@ def build_workflow(p):
         nodes["vae"] = {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}}
         vae_ref = ["vae", 0]
 
-    pos = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": convert_weight_brackets(p["prompt"])}}
-    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": convert_weight_brackets(enhance_negative(p.get("negative", "")))}}
+    pos = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": p["prompt"]}}
+    neg = {"class_type": "CLIPTextEncode", "inputs": {"clip": cur_clip, "text": enhance_negative(p.get("negative", ""))}}
     nodes["6"], nodes["7"] = pos, neg
 
     # ControlNet

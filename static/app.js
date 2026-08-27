@@ -289,6 +289,8 @@ async function init() {
       for (const id of ["ckpt", "vae"]) {
         if (s[id] && $(id).querySelector(`option[value="${s[id]}"]`)) $(id).value = s[id];
       }
+      // 默认模型固定 waiIllustriousSDXL_v170（列表第一个是 Illustrious-XL-v1.1，Pony 系色浓）
+      if (!s.ckpt && ck.items.includes("waiIllustriousSDXL_v170.safetensors")) $("ckpt").value = "waiIllustriousSDXL_v170.safetensors";
     } else {
       $("conn").textContent = "连接失败";
       $("conn").classList.add("bad");
@@ -348,7 +350,10 @@ $("importBtn").onclick = () => {
       $("status").textContent = `导入完成: ${r.name} → ${r.dest}`;
       // 刷新列表
       const [ck, lr] = await Promise.all([api("/api/checkpoints"), api("/api/loras")]);
+      const prevCk = $("ckpt").value;
       $("ckpt").innerHTML = ck.items.map(n => `<option>${n}</option>`).join("");
+      if (ck.items.includes(prevCk)) $("ckpt").value = prevCk;
+      else if (ck.items.includes("waiIllustriousSDXL_v170.safetensors")) $("ckpt").value = "waiIllustriousSDXL_v170.safetensors";
       window.LORAS = lr.items;
       addLoraRow(r.name);
     } else {
