@@ -378,7 +378,7 @@ $("luxBtn").onclick = () => {
   if (cur && !has) $("prompt").value = cur + ", " + extra;
   else if (!cur) $("prompt").value = extra;
   if (!$("negative").value.trim()) {
-    $("negative").value = "(text:1.5), (watermark:1.5), (signature:1.5), (logo:1.4), (caption:1.4), (letter:1.4), (sound effect:1.4), lowres, bad anatomy, bad hands, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, blurry";
+    $("negative").value = "(text:1.5), (watermark:1.5), (signature:1.5), (logo:1.5), (letter:1.4), (caption:1.4), (subtitles:1.4), (ui:1.4), (border:1.4), (frame:1.4), (speech bubble:1.4), (dialogue:1.4), (sound effect:1.4), (sfx:1.4), (japanese text:1.4), (english text:1.4), (typography:1.4), (kana:1.4), (kanji:1.4), (katakana:1.4), (hiragana:1.4), (words:1.3), (writing:1.3), (font:1.3), (label:1.3), (slogan:1.3), (title:1.3), (header:1.3), (footer:1.3), (menu:1.3), (icons:1.3), (number:1.3), (timestamp:1.3), (date:1.3), (url:1.3), (email:1.3), (barcode:1.3), (qr code:1.3), lowres, bad anatomy, bad hands, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, blurry";
   }
   saveSettings();
   $("status").textContent = "已应用豪横预设";

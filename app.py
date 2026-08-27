@@ -110,11 +110,16 @@ def api_favs():
 
 
 NEG_ENHANCE = [
-    "(text:1.5)", "(watermark:1.5)", "(signature:1.5)", "(logo:1.4)",
-    "(caption:1.4)", "(letter:1.4)", "(sound effect:1.4)",
+    "(text:1.5)", "(watermark:1.5)", "(signature:1.5)", "(logo:1.5)",
+    "(letter:1.4)", "(caption:1.4)", "(subtitles:1.4)", "(ui:1.4)",
+    "(border:1.4)", "(frame:1.4)", "(speech bubble:1.4)", "(dialogue:1.4)",
+    "(sound effect:1.4)", "(sfx:1.4)", "(japanese text:1.4)", "(english text:1.4)",
+    "(typography:1.4)", "(kana:1.4)", "(kanji:1.4)", "(katakana:1.4)", "(hiragana:1.4)",
+    "(words:1.3)", "(writing:1.3)", "(font:1.3)", "(label:1.3)", "(slogan:1.3)",
+    "(title:1.3)", "(header:1.3)", "(footer:1.3)", "(menu:1.3)", "(icons:1.3)",
+    "(number:1.3)", "(timestamp:1.3)", "(date:1.3)", "(url:1.3)", "(email:1.3)",
+    "(barcode:1.3)", "(qr code:1.3)",
 ]
-# 注意：CLIP 77 token 上限（约 300 字符），负面词超长会整体异常（实测全白/色彩损坏）。
-# 用户负面词 + 此词库必须控制在 ~300 字符内，所以词库只保留最核心的 7 项。
 
 
 BRACKET_PAT = re.compile(r"\(+[^()]*?\)+")
