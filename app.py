@@ -16,6 +16,47 @@ from werkzeug.utils import secure_filename
 COMFY = "http://127.0.0.1:8188"
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
+# ---------- 访问密码（防外人用工作台）----------
+# ON_SERVER 时读 /root/autodl-tmp/genui_pass.txt，存在且非空则启用登录验证
+# 本地模式不启用；改密码 = 改服务器上该文件内容后重启
+def _load_auth_password():
+    # 环境变量优先（测试/部署用），其次服务器密码文件；本地模式无文件则不启用
+    env = os.environ.get("GENUI_PASSWORD", "")
+    if env:
+        return env.strip()
+    if not os.path.exists("/root/autodl-tmp/ComfyUI"):
+        return ""
+    try:
+        with open("/root/autodl-tmp/genui_pass.txt", "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+AUTH_PASSWORD = _load_auth_password()
+AUTH_COOKIE = "genui_auth"
+
+@app.before_request
+def auth_gate():
+    if not AUTH_PASSWORD:
+        return None
+    if request.path == "/api/login" or request.path.startswith("/static") or request.method == "OPTIONS":
+        return None
+    if request.cookies.get(AUTH_COOKIE) == AUTH_PASSWORD:
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+    return render_template("login.html"), 401
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    data = request.get_json(silent=True) or {}
+    if data.get("password") == AUTH_PASSWORD:
+        resp = jsonify({"ok": True})
+        resp.set_cookie(AUTH_COOKIE, AUTH_PASSWORD, max_age=30 * 24 * 3600,
+                        httponly=True, samesite="Lax")
+        return resp
+    return jsonify({"ok": False, "error": "wrong password"}), 401
+
 # 服务器直跑模式：直接本地操作文件，无需 SSH
 ON_SERVER = os.path.exists("/root/autodl-tmp/ComfyUI")
 SERVER_BASE = "/root/autodl-tmp/ComfyUI"

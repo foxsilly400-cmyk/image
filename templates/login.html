@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工作台 · 访问验证</title>
+<style>
+  body { margin:0; background:#17171f; color:#ddd; font-family:"Microsoft YaHei",sans-serif;
+         display:flex; align-items:center; justify-content:center; min-height:100vh; }
+  .box { background:#20202c; border:1px solid #33334a; border-radius:12px; padding:32px 36px;
+         width:300px; text-align:center; }
+  h1 { font-size:18px; margin:0 0 6px; color:#eee; }
+  p  { font-size:13px; color:#999; margin:0 0 20px; }
+  input { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:8px;
+          border:1px solid #444; background:#17171f; color:#eee; font-size:15px; outline:none; }
+  input:focus { border-color:#7a5cff; }
+  button { margin-top:14px; width:100%; padding:10px; border:0; border-radius:8px;
+           background:#7a5cff; color:#fff; font-size:15px; cursor:pointer; }
+  button:hover { background:#8f74ff; }
+  .err { color:#ff6b6b; font-size:13px; margin-top:10px; min-height:18px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>跑图工作台</h1>
+  <p>请输入访问密码</p>
+  <input type="password" id="pw" placeholder="密码" autofocus>
+  <button id="btn">进入</button>
+  <div class="err" id="err"></div>
+</div>
+<script>
+  const pw = document.getElementById("pw");
+  const btn = document.getElementById("btn");
+  const err = document.getElementById("err");
+  async function login() {
+    err.textContent = "";
+    if (!pw.value) { err.textContent = "请输入密码"; return; }
+    try {
+      const r = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pw.value })
+      });
+      const j = await r.json();
+      if (r.ok && j.ok) { location.href = "/"; }
+      else { err.textContent = "密码错误"; pw.select(); }
+    } catch (e) { err.textContent = "网络错误，稍后再试"; }
+  }
+  btn.onclick = login;
+  pw.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+</script>
+</body>
+</html>
