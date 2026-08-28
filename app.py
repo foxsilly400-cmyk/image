@@ -716,10 +716,29 @@ def api_image():
     fn = request.args.get("filename", "")
     sub = request.args.get("subfolder", "")
     typ = request.args.get("type", "output")
+    if not fn or ".." in fn or "/" in fn or "\\" in fn:
+        return jsonify({"ok": False, "error": "非法文件名"})
+    if sub and (".." in sub or "/" in sub or "\\" in sub):
+        return jsonify({"ok": False, "error": "非法路径"})
     try:
+        if ON_SERVER:
+            # 直接读本地文件：快 + 支持 304/缓存头（图片名唯一，长缓存安全）
+            base = SERVER_BASE
+            if typ == "input":
+                base = os.path.join(base, "input")
+            elif typ == "temp":
+                base = os.path.join(base, "temp")
+            else:
+                base = os.path.join(base, "output")
+            p = os.path.join(base, sub, fn)
+            if not os.path.exists(p):
+                return jsonify({"ok": False, "error": "文件不存在"}), 404
+            return send_file(p, mimetype="image/png", conditional=True, max_age=31536000)
         with urllib.request.urlopen(f"{COMFY}/view?filename={fn}&subfolder={sub}&type={typ}",
                                     timeout=60) as r:
-            return send_file(BytesIO(r.read()), mimetype="image/png")
+            resp = send_file(BytesIO(r.read()), mimetype="image/png",
+                             conditional=True, max_age=31536000)
+            return resp
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
 

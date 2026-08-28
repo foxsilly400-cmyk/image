@@ -153,6 +153,10 @@ try { DELETED = new Set(JSON.parse(sessionStorage.getItem("genui_deleted") || "[
 function markDeleted(fn) {
   DELETED.add(fn);
   sessionStorage.setItem("genui_deleted", JSON.stringify([...DELETED]));
+  // 同步清理已渲染任务卡的 items（lightbox 列表不再含已删图）
+  for (const e of TASK_CARDS.values()) {
+    if (e.items) e.items = e.items.filter(i => i.filename !== fn);
+  }
 }
 
 // 收藏：滑动式翻页（每页按面板高度自适应条数，◀ ▶ 圆点 + 触摸滑动）
@@ -641,154 +645,184 @@ function settingsSummary(s) {
   ].filter(Boolean).join("\n");
 }
 
+// 任务卡缓存：按任务 id 增量渲染（不每轮清空重建，图片不重复加载）
+const TASK_CARDS = new Map();
+
+function createPendingCard(t) {
+  const card = document.createElement("div");
+  card.className = "img-card pending";
+  const ph = document.createElement("div");
+  ph.className = "pending-ph";
+  const prog = document.createElement("div");
+  prog.className = "prog";
+  const fill = document.createElement("div");
+  fill.className = "prog-fill";
+  prog.appendChild(fill);
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const pr = document.createElement("span");
+  pr.className = "t-prompt";
+  pr.textContent = (t.prompt || "").slice(0, 60);
+  const cancel = document.createElement("button");
+  cancel.className = "cancel-btn";
+  cancel.textContent = "取消";
+  cancel.onclick = async () => {
+    cancel.disabled = true;
+    try {
+      const r = await api("/api/cancel", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task_id: t.id }),
+      });
+      if (!r.ok) { cancel.disabled = false; $("status").textContent = "取消失败: " + (r.error || ""); }
+    } catch (e) { cancel.disabled = false; }
+  };
+  bar.appendChild(pr);
+  bar.appendChild(cancel);
+  card.append(ph, prog, bar);
+  const entry = { kind: "pending", card, ph, fill };
+  updatePendingCard(entry, t);
+  return entry;
+}
+
+function updatePendingCard(entry, t) {
+  const stageMap = { queued: "排队中", preparing: "准备中", sampling: "采样中", finishing: "收尾中" };
+  const stageText = stageMap[t.stage] || (t.status === "queued" ? "排队中" : "生成中");
+  const pct = t.progress != null ? Math.round(t.progress * 100) : 0;
+  entry.ph.innerHTML = `<span class="spinner"></span><div>${stageText}${t.stage === "sampling" ? ` ${pct}%` : ""}</div>`;
+  const fillW = t.stage === "sampling" || t.stage === "finishing" ? Math.max(pct, 3) : 3;
+  entry.fill.style.width = fillW + "%";
+}
+
+function createStateCard(html) {
+  const card = document.createElement("div");
+  card.className = "img-card error";
+  const ph = document.createElement("div");
+  ph.className = "pending-ph";
+  ph.innerHTML = html;
+  card.appendChild(ph);
+  return card;
+}
+
+function createDoneCard(t) {
+  const items = [];
+  for (const img of t.images) {
+    if (DELETED.has(img.filename)) continue;
+    items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
+  }
+  if (!items.length) return { kind: "empty", cards: [], items: [] };
+  const cards = [];
+  for (let idx = 0; idx < items.length; idx++) {
+    const it = items[idx];
+    const card = document.createElement("div");
+    card.className = "img-card";
+    const im = document.createElement("img");
+    im.src = it.url;
+    im.loading = "lazy";
+    im.decoding = "async";
+    im.fetchPriority = "low";
+    im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
+    im.onclick = () => openLightbox(it.url, it.name, it.settings, items, idx);
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fav = document.createElement("button");
+    fav.className = "fav-btn";
+    const isFav = getFavs().some(f => f.img.filename === it.filename);
+    fav.textContent = isFav ? "★" : "☆";
+    fav.classList.toggle("on", isFav);
+    fav.title = isFav ? "已收藏（点击取消收藏）" : "收藏此图的提示词和设置";
+    fav.onclick = () => {
+      if (isFav) {
+        const favs = getFavs().filter(f => f.img.filename !== it.filename);
+        setFavs(favs);
+        renderFavs();
+        fav.textContent = "☆";
+        fav.classList.remove("on");
+        fav.title = "收藏此图的提示词和设置";
+      } else {
+        addFav(it, t.payload || {});
+        fav.textContent = "★";
+        fav.classList.add("on");
+        fav.title = "已收藏（点击取消收藏）";
+      }
+    };
+    const up = document.createElement("button");
+    up.className = "fav-btn up-btn";
+    up.textContent = "✨";
+    up.title = "二次采样高清（Hires Fix）";
+    up.onclick = () => upscaleImage(it);
+    const del = document.createElement("button");
+    del.className = "fav-btn del-btn";
+    del.textContent = "🗑";
+    del.title = "删除此图片（服务器文件）";
+    del.onclick = () => {
+      if (!confirm("删除这张图片？（服务器文件将移除）")) return;
+      markDeleted(it.filename);
+      card.remove();
+      $("status").textContent = "已删除";
+      api("/api/delete_image", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: it.filename }),
+      }).then(r => {
+        if (!r.ok) $("status").textContent = "后台删除失败: " + (r.error || "");
+      });
+    };
+    const dl = document.createElement("a");
+    dl.href = imgUrl(it);
+    dl.download = "";
+    dl.textContent = "下载";
+    bar.append(fav, up, del, dl);
+    card.append(im, bar);
+    cards.push(card);
+  }
+  return { kind: "done", cards, items };
+}
+
+function createTaskCard(t) {
+  if (t.status === "queued" || t.status === "running") return createPendingCard(t);
+  if (t.status === "cancelled") return { kind: "state", cards: [createStateCard(`<div style="color:#d29922">已取消</div><div class="t-prompt">${(t.prompt || "").slice(0, 60)}</div>`)] };
+  if (t.status === "error") return { kind: "state", cards: [createStateCard(`<div style="color:#e5484d">失败</div><div class="t-prompt">${(t.error || "").slice(0, 60)}</div>`)] };
+  if (t.status === "done") return createDoneCard(t);
+  return { kind: "empty", cards: [], items: [] };
+}
+
+function entryCards(entry) {
+  return entry.kind === "pending" ? [entry.card] : (entry.cards || []);
+}
+
 async function pollTasks() {
   try {
     const r = await api("/api/tasks");
     if (!r.ok) return;
     const gal = $("gallery");
-    gal.innerHTML = "";
     LB_ALL = [];
     const running = r.tasks.filter(t => t.status === "running" || t.status === "queued").length;
     if (running) $("status").textContent = `队列中 ${running} 个任务...`;
+    const seen = new Set();
     let shown = 0;
     const LIMIT = 30;
     for (const t of r.tasks) {
       if (shown >= LIMIT) break;
-      // 进行中的任务：占位卡 + 进度条 + 取消
-      if (t.status === "queued" || t.status === "running") {
-        shown++;
-        const card = document.createElement("div");
-        card.className = "img-card pending";
-        const ph = document.createElement("div");
-        ph.className = "pending-ph";
-        const stageMap = { queued: "排队中", preparing: "准备中", sampling: "采样中", finishing: "收尾中" };
-        const stageText = stageMap[t.stage] || (t.status === "queued" ? "排队中" : "生成中");
-        const pct = t.progress != null ? Math.round(t.progress * 100) : 0;
-        ph.innerHTML = `<span class="spinner"></span><div>${stageText}${t.stage === "sampling" ? ` ${pct}%` : ""}</div>`;
-        const prog = document.createElement("div");
-        prog.className = "prog";
-        const fill = document.createElement("div");
-        fill.className = "prog-fill";
-        const fillW = t.stage === "sampling" || t.stage === "finishing" ? Math.max(pct, 3) : 3;
-        fill.style.width = fillW + "%";
-        prog.appendChild(fill);
-        const bar = document.createElement("div");
-        bar.className = "bar";
-        const pr = document.createElement("span");
-        pr.className = "t-prompt";
-        pr.textContent = (t.prompt || "").slice(0, 60);
-        const cancel = document.createElement("button");
-        cancel.className = "cancel-btn";
-        cancel.textContent = "取消";
-        cancel.onclick = async () => {
-          cancel.disabled = true;
-          try {
-            const r = await api("/api/cancel", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ task_id: t.id }),
-            });
-            if (!r.ok) { cancel.disabled = false; $("status").textContent = "取消失败: " + (r.error || ""); }
-          } catch (e) { cancel.disabled = false; }
-        };
-        bar.appendChild(pr);
-        bar.appendChild(cancel);
-        card.append(ph, prog, bar);
-        gal.appendChild(card);
-        continue;
+      seen.add(t.id);
+      let entry = TASK_CARDS.get(t.id);
+      if (!entry) {
+        entry = createTaskCard(t);
+        TASK_CARDS.set(t.id, entry);
+        for (const c of entryCards(entry)) gal.appendChild(c);
+      } else if (entry.kind === "pending" && (t.status === "queued" || t.status === "running")) {
+        updatePendingCard(entry, t);
+      } else if (entry.kind !== "done" && t.status === "done" && t.images && t.images.length) {
+        // 完成：替换为图片卡
+        for (const c of entryCards(entry)) c.remove();
+        entry = createTaskCard(t);
+        TASK_CARDS.set(t.id, entry);
+        for (const c of entryCards(entry)) gal.appendChild(c);
       }
-      if (t.status === "cancelled") {
-        shown++;
-        const card = document.createElement("div");
-        card.className = "img-card error";
-        const ph = document.createElement("div");
-        ph.className = "pending-ph";
-        ph.innerHTML = `<div style="color:#d29922">已取消</div><div class="t-prompt">${(t.prompt || "").slice(0, 60)}</div>`;
-        card.appendChild(ph);
-        gal.appendChild(card);
-        continue;
-      }
-      if (t.status === "error") {
-        shown++;
-        const card = document.createElement("div");
-        card.className = "img-card error";
-        const ph = document.createElement("div");
-        ph.className = "pending-ph";
-        ph.innerHTML = `<div style="color:#e5484d">失败</div><div class="t-prompt">${(t.error || "").slice(0, 60)}</div>`;
-        card.appendChild(ph);
-        gal.appendChild(card);
-        continue;
-      }
-      // 完成：每张图都展示（已删除/无图的跳过）
-      if (t.status === "done" && t.images && t.images.length) {
-        const items = [];
-        for (const img of t.images) {
-          if (DELETED.has(img.filename)) continue;
-          items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
-        }
-        LB_ALL.push(...items);
-        for (let idx = 0; idx < items.length; idx++) {
-          const it = items[idx];
-          shown++;
-          const card = document.createElement("div");
-          card.className = "img-card";
-          const im = document.createElement("img");
-          im.src = it.url;
-          im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
-          im.onclick = () => openLightbox(it.url, it.name, it.settings, LB_ALL, LB_ALL.indexOf(it));
-          const bar = document.createElement("div");
-          bar.className = "bar";
-          const fav = document.createElement("button");
-          fav.className = "fav-btn";
-          const isFav = getFavs().some(f => f.img.filename === it.filename);
-          fav.textContent = isFav ? "★" : "☆";
-          fav.classList.toggle("on", isFav);
-          fav.title = isFav ? "已收藏（点击取消收藏）" : "收藏此图的提示词和设置";
-          fav.onclick = () => {
-            if (isFav) {
-              const favs = getFavs().filter(f => f.img.filename !== it.filename);
-              setFavs(favs);
-              renderFavs();
-              fav.textContent = "☆";
-              fav.classList.remove("on");
-              fav.title = "收藏此图的提示词和设置";
-            } else {
-              addFav(it, t.payload || {});
-              fav.textContent = "★";
-              fav.classList.add("on");
-              fav.title = "已收藏（点击取消收藏）";
-            }
-          };
-          const up = document.createElement("button");
-          up.className = "fav-btn up-btn";
-          up.textContent = "✨";
-          up.title = "二次采样高清（Hires Fix）";
-          up.onclick = () => upscaleImage(it);
-          const del = document.createElement("button");
-          del.className = "fav-btn del-btn";
-          del.textContent = "🗑";
-          del.title = "删除此图片（服务器文件）";
-          del.onclick = () => {
-            if (!confirm("删除这张图片？（服务器文件将移除）")) return;
-            // 先移除 UI，再异步删后台（不阻塞）
-            markDeleted(it.filename);
-            card.remove();
-            $("status").textContent = "已删除";
-            api("/api/delete_image", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ filename: it.filename }),
-            }).then(r => {
-              if (!r.ok) $("status").textContent = "后台删除失败: " + (r.error || "");
-            });
-          };
-          const dl = document.createElement("a");
-          dl.href = imgUrl(it);
-          dl.download = "";
-          dl.textContent = "下载";
-          bar.append(fav, up, del, dl);
-          card.append(im, bar);
-          gal.appendChild(card);
-        }
-      }
+      if (entry.kind === "done") LB_ALL.push(...entry.items);
+      shown += entry.kind === "done" ? Math.max(entry.items.length, 1) : 1;
+    }
+    // 移出列表的旧任务卡片回收
+    for (const [id, e] of TASK_CARDS) {
+      if (!seen.has(id)) { for (const c of entryCards(e)) c.remove(); TASK_CARDS.delete(id); }
     }
   } catch (e) { $("status").textContent = "poll error: " + (e.stack || e.message); }
 }
