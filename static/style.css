@@ -281,8 +281,8 @@ input[type=file] { padding: 6px; font-size: 12px; }
 }
 .cancel-btn {
   background: rgba(229, 72, 77, 0.12); border: 1px solid rgba(229, 72, 77, 0.45); color: #ff8b8b;
-  border-radius: 7px; padding: 3px 10px; font-size: 11px; cursor: pointer; margin-left: 8px;
-  transition: background 0.16s;
+  border-radius: 7px; padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; margin-left: 8px;
+  white-space: nowrap; transition: background 0.16s;
 }
 .cancel-btn:hover { background: rgba(229, 72, 77, 0.28); }
 .cancel-btn:disabled { opacity: 0.5; cursor: default; }

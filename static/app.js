@@ -674,7 +674,8 @@ function createPendingCard(t) {
   pr.textContent = (t.prompt || "").slice(0, 60);
   const cancel = document.createElement("button");
   cancel.className = "cancel-btn";
-  cancel.textContent = "取消";
+  cancel.textContent = "删除任务";
+  cancel.title = "取消并删除此任务";
   cancel.onclick = async () => {
     cancel.disabled = true;
     try {
@@ -695,7 +696,7 @@ function createPendingCard(t) {
   bar.appendChild(pr);
   bar.appendChild(cancel);
   card.append(ph, prog, bar);
-  const entry = { kind: "pending", card, ph, fill };
+  const entry = { kind: "pending", card, ph, fill, cancelBtn: cancel };
   updatePendingCard(entry, t);
   return entry;
 }
@@ -707,6 +708,34 @@ function updatePendingCard(entry, t) {
   entry.ph.innerHTML = `<span class="spinner"></span><div>${stageText}${t.stage === "sampling" ? ` ${pct}%` : ""}</div>`;
   const fillW = t.stage === "sampling" || t.stage === "finishing" ? Math.max(pct, 3) : 3;
   entry.fill.style.width = fillW + "%";
+  // 确保删除任务按钮存在（任何情况下都补上）
+  if (!entry.cancelBtn || !entry.cancelBtn.isConnected) {
+    const bar = entry.card.querySelector(".bar");
+    if (bar && !bar.querySelector(".cancel-btn")) {
+      const cancel = document.createElement("button");
+      cancel.className = "cancel-btn";
+      cancel.textContent = "删除任务";
+      cancel.title = "取消并删除此任务";
+      cancel.onclick = async () => {
+        cancel.disabled = true;
+        try {
+          const r = await api("/api/cancel", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ task_id: t.id }),
+          });
+          if (r.ok) {
+            entry.card.remove();
+            TASK_CARDS.delete(t.id);
+          } else {
+            cancel.disabled = false;
+            $("status").textContent = "取消失败: " + (r.error || "");
+          }
+        } catch (e) { cancel.disabled = false; }
+      };
+      bar.appendChild(cancel);
+      entry.cancelBtn = cancel;
+    }
+  }
 }
 
 function createStateCard(html) {
