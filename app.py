@@ -706,10 +706,18 @@ def api_import():
                 break
             out.write(chunk)
             total += len(chunk)
+    if ON_SERVER:
+        dest = os.path.join(SERVER_BASE, dest_dir, fname)
+        try:
+            os.replace(local_tmp, dest)
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)})
+        return jsonify({"ok": True, "name": fname, "size_mb": round(total / 1e6, 1),
+                        "dest": dest_dir})
     dest = f"/root/autodl-tmp/ComfyUI/models/{dest_dir}/{fname}"
     key = os.path.expanduser(r"~/.ssh/id_ed25519")
-    cmd = ["scp", "-P", "21647", "-i", key, "-o", "StrictHostKeyChecking=accept-new",
-           local_tmp, f"root@connect.westc.seetacloud.com:{dest}"]
+    cmd = ["scp", "-P", SSH_PORT, "-i", key, "-o", "StrictHostKeyChecking=accept-new",
+           local_tmp, f"{SSH_TARGET}:{dest}"]
     try:
         r = subprocess.run(cmd, capture_output=True, timeout=7200)
         if r.returncode != 0:
