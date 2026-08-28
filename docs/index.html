@@ -36,11 +36,16 @@
       if (!target) { show('bad', '未配置目标实例'); return; }
       var go = document.getElementById('go');
       go.href = target;
-      // 健康检查（genui API 带 CORS）
+      // 健康检查（genui API 带 CORS）；401 = 服务在线但要登录，也算可达
       fetch(target + '/api/checkpoints', { cache: 'no-store' })
-        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('http ' + r.status)); })
+        .then(function (r) {
+          if (r.ok) return r.json();
+          if (r.status === 401) return Promise.resolve(null);
+          return Promise.reject(new Error('http ' + r.status));
+        })
         .then(function (d) {
-          show('ok', '实例在线 ✓ 模型 ' + ((d.items || []).length) + ' 个，即将跳转…');
+          var extra = d && d.items ? '模型 ' + d.items.length + ' 个' : '（需登录）';
+          show('ok', '实例在线 ✓ ' + extra + '，即将跳转…');
           countdown(3, function () { location.replace(target); });
         })
         .catch(function () {
