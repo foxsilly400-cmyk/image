@@ -373,9 +373,9 @@ $("importBtn").onclick = () => {
 
 // ---------- 豪横预设 ----------
 $("luxBtn").onclick = () => {
-  $("steps").value = 45;
-  $("cfg").value = 6.5;
-  $("sampler").value = "dpmpp_2m_sde";
+  $("steps").value = 28;
+  $("cfg").value = 6;
+  $("sampler").value = "dpmpp_2m";
   $("scheduler").value = "karras";
   $("hires").checked = true;
   $("hiresScale").value = 1.5;
@@ -733,7 +733,7 @@ function createDoneCard(t) {
     im.decoding = "async";
     im.fetchPriority = "low";
     im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
-    im.onclick = () => openLightbox(it.url, it.name, it.settings, items, idx);
+    im.onclick = () => openLightbox(it.url, it.name, it.settings, LB_ALL, LB_ALL.indexOf(it));
     const bar = document.createElement("div");
     bar.className = "bar";
     const fav = document.createElement("button");
