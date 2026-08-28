@@ -154,9 +154,14 @@ try { DELETED = new Set(JSON.parse(sessionStorage.getItem("genui_deleted") || "[
 function markDeleted(fn) {
   DELETED.add(fn);
   sessionStorage.setItem("genui_deleted", JSON.stringify([...DELETED]));
-  // 同步清理已渲染任务卡的 items（lightbox 列表不再含已删图）
-  for (const e of TASK_CARDS.values()) {
+  // 同步清理任务卡的 items/cards，全删的任务直接从缓存移除（防残留导致按钮/卡片异常）
+  for (const [id, e] of TASK_CARDS) {
     if (e.items) e.items = e.items.filter(i => i.filename !== fn);
+    if (e.cards) e.cards = e.cards.filter(c => c.dataset.fn !== fn);
+    if (e.kind === "done" && e.items.length === 0) {
+      for (const c of e.cards) c.remove();
+      TASK_CARDS.delete(id);
+    }
   }
 }
 
@@ -727,6 +732,7 @@ function createDoneCard(t) {
     const it = items[idx];
     const card = document.createElement("div");
     card.className = "img-card";
+    card.dataset.fn = it.filename;
     const im = document.createElement("img");
     im.src = imgUrl(it, true);
     im.loading = "lazy";
