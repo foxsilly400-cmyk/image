@@ -504,14 +504,19 @@ function currentTag() {
   const v = promptEl.value;
   const pos = promptEl.selectionStart ?? v.length;
   const before = v.slice(0, pos);
-  const parts = before.split(",");
-  const cur = parts[parts.length - 1];
-  return { cur: cur.trim(), start: pos - cur.length };
+  const lastComma = before.lastIndexOf(",");
+  let start = lastComma + 1;
+  while (start < before.length && v[start] === " ") start++;
+  const cur = before.slice(start);
+  return { cur, start };
 }
 
+let suggestStart = -1;  // fetchSuggest 成功时记录的当前词起点（防点击时 selection 丢失）
+
 async function fetchSuggest() {
-  const { cur } = currentTag();
+  const { cur, start } = currentTag();
   if (!cur || cur.length < 1 || /[()]/.test(cur)) {
+    suggestStart = -1;
     suggestBox.style.display = "none";
     return;
   }
@@ -519,6 +524,7 @@ async function fetchSuggest() {
     const resp = await fetch("/api/tag_suggest?q=" + encodeURIComponent(cur));
     const j = await resp.json();
     suggestItems = j.items || [];
+    suggestStart = start;
     suggestIdx = -1;
     if (!suggestItems.length) { suggestBox.style.display = "none"; return; }
     suggestBox.innerHTML = "";
@@ -550,10 +556,18 @@ function paintSuggest() {
 
 function pickSuggest(i) {
   if (i < 0 || i >= suggestItems.length) return;
-  const { cur, start } = currentTag();
   const v = promptEl.value;
-  const after = v.slice(start + cur.length);
-  promptEl.value = v.slice(0, start) + suggestItems[i] + (after.startsWith(",") ? after : ", " + after);
+  // 用联想请求时记录的词起点；异常时回退到 currentTag
+  let start = suggestStart;
+  if (start < 0 || start > v.length) start = currentTag().start;
+  // 从起点到下一个逗号/末尾 = 整个当前词段（无论光标在哪都整体替换，避免残留）
+  let end = start;
+  while (end < v.length && v[end] !== ",") end++;
+  let e2 = end;
+  while (e2 > start && v[e2 - 1] === " ") e2--;
+  const after = v.slice(end);
+  const sep = after ? (after.startsWith(",") ? after : ", " + after) : "";
+  promptEl.value = v.slice(0, start) + suggestItems[i] + sep;
   const np = start + suggestItems[i].length + 1;
   promptEl.setSelectionRange(np, np);
   suggestBox.style.display = "none";
