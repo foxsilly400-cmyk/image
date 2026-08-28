@@ -375,3 +375,9 @@ input[type=file] { padding: 6px; font-size: 12px; }
 .lb-issues-title { font-size: 12px; color: #d4a94e; margin-bottom: 6px; }
 .issue-btn { display: block; width: 100%; margin: 4px 0; padding: 6px 10px; text-align: left; border: 1px solid #b8860b88; border-radius: 6px; background: #3a2f16; color: #f0d48a; cursor: pointer; font-size: 13px; }
 .issue-btn:hover { background: #4d3d1c; }
+
+.merge-row { display: flex; justify-content: flex-end; padding: 4px 2px 8px; }
+.merge-label { font-size: 12px; color: #999; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.merge-label input { accent-color: var(--accent); cursor: pointer; }
+.img-card { position: relative; }
+.merge-badge { position: absolute; top: 6px; right: 6px; z-index: 2; background: rgba(0,0,0,0.72); color: #fff; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 10px; pointer-events: none; }

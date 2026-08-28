@@ -691,11 +691,21 @@ async function pollTasks() {
           items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
         }
         LB_ALL.push(...items);
-        for (let idx = 0; idx < items.length; idx++) {
-          const it = items[idx];
+        // 合并模式：同批多张只显示第一张卡片 + 徽标（lightbox 内仍可左右看全部）
+        const mergeMode = document.getElementById("mergeBatch")?.checked;
+        const displayItems = mergeMode && items.length > 1 ? items.slice(0, 1) : items;
+        for (let idx = 0; idx < displayItems.length; idx++) {
+          const it = displayItems[idx];
           shown++;
           const card = document.createElement("div");
           card.className = "img-card";
+          if (mergeMode && items.length > 1) {
+            const badge = document.createElement("div");
+            badge.className = "merge-badge";
+            badge.textContent = "×" + items.length;
+            badge.title = "同批 " + items.length + " 张，点击后左右切换查看";
+            card.appendChild(badge);
+          }
           const im = document.createElement("img");
           im.src = it.url;
           im.onerror = () => { im.style.visibility = "hidden"; card.style.minHeight = "120px"; };
@@ -951,5 +961,16 @@ $("lbStage").addEventListener("touchend", e => {
 
 init();
 pollTasks();
+
+// 合并同批开关：状态持久化，切换即刷新画廊
+(function () {
+  const el = document.getElementById("mergeBatch");
+  if (!el) return;
+  if (localStorage.getItem("genui_merge") === "0") el.checked = false;
+  el.addEventListener("change", () => {
+    localStorage.setItem("genui_merge", el.checked ? "1" : "0");
+    pollTasks();
+  });
+})();
 refreshTriggers();
 loadFavs();
