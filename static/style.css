@@ -273,6 +273,19 @@ input[type=file] { padding: 6px; font-size: 12px; }
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 8px; color: var(--muted); font-size: 13px; padding: 10px;
 }
+.prog { height: 5px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; margin: 0 12px 10px; overflow: hidden; }
+.prog-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #4c5fd5, #7ee787);
+  transition: width 0.4s ease;
+}
+.cancel-btn {
+  background: rgba(229, 72, 77, 0.12); border: 1px solid rgba(229, 72, 77, 0.45); color: #ff8b8b;
+  border-radius: 7px; padding: 3px 10px; font-size: 11px; cursor: pointer; margin-left: 8px;
+  transition: background 0.16s;
+}
+.cancel-btn:hover { background: rgba(229, 72, 77, 0.28); }
+.cancel-btn:disabled { opacity: 0.5; cursor: default; }
 .nlbox { display: flex; gap: 6px; }
 .nlbox input { flex: 1; }
 .nlbox button {

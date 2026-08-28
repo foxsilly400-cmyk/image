@@ -325,8 +325,14 @@ def task_worker():
                 COND.wait()
             tid = TASK_ORDER[0]
         with TASK_LOCK:
+            if tid not in TASK_ORDER:
+                continue  # 排队中被取消移除
             TASKS[tid]["status"] = "running"
+            TASKS[tid]["stage"] = "preparing"
+            TASKS[tid]["progress"] = 0
+            TASKS[tid].pop("cancelled", None)
             payload = TASKS[tid]["payload"]
+        cancelled = False
         try:
             if payload.get("mode") == "upscale":
                 # 复制源图到 input 目录（供 LoadImage 使用）
@@ -342,34 +348,70 @@ def task_worker():
                 wf = build_workflow(payload)
             resp = comfy_post("/prompt", {"prompt": wf})
             pid = resp["prompt_id"]
-            # 轮询 ComfyUI 完成
+            h = {}
+            # 轮询 ComfyUI：进度检查点 + 完成判定
             for _ in range(1200):
                 time.sleep(2)
+                with TASK_LOCK:
+                    if TASKS[tid].get("cancelled"):
+                        cancelled = True
+                        break
+                # 进度检查点：/progress 里找当前 prompt 的采样进度
+                try:
+                    prog = comfy_get("/progress")
+                    matched = False
+                    for run in prog.get("running", []):
+                        if run.get("prompt_id") == pid:
+                            matched = True
+                            pv = run.get("progress", 0)
+                            with TASK_LOCK:
+                                TASKS[tid]["progress"] = round(pv, 3)
+                                TASKS[tid]["stage"] = "sampling" if pv > 0 else "preparing"
+                                eta = run.get("eta_seconds")
+                                if eta is not None:
+                                    TASKS[tid]["eta"] = int(eta)
+                            break
+                    if not matched:
+                        with TASK_LOCK:
+                            if TASKS[tid]["stage"] == "sampling":
+                                TASKS[tid]["stage"] = "finishing"
+                                TASKS[tid]["progress"] = 1.0
+                except Exception:
+                    pass
                 try:
                     h = comfy_get(f"/history/{pid}")
                 except Exception:
                     continue
                 if pid in h:
                     break
-            imgs = []
-            for out in h.get(pid, {}).get("outputs", {}).values():
-                for img in out.get("images", []):
-                    imgs.append({"filename": img["filename"],
-                                 "subfolder": img.get("subfolder", ""),
-                                 "type": img["type"]})
-            with TASK_LOCK:
-                TASKS[tid]["images"] = imgs
-                TASKS[tid]["status"] = "done"
-                seed_node = wf.get("10", wf.get("ks"))
-                if seed_node:
-                    TASKS[tid]["seed"] = seed_node["inputs"]["seed"]
+            if not cancelled:
+                imgs = []
+                for out in h.get(pid, {}).get("outputs", {}).values():
+                    for img in out.get("images", []):
+                        imgs.append({"filename": img["filename"],
+                                     "subfolder": img.get("subfolder", ""),
+                                     "type": img["type"]})
+                with TASK_LOCK:
+                    TASKS[tid]["images"] = imgs
+                    TASKS[tid]["status"] = "done"
+                    TASKS[tid]["stage"] = "done"
+                    TASKS[tid]["progress"] = 1.0
+                    seed_node = wf.get("10", wf.get("ks"))
+                    if seed_node:
+                        TASKS[tid]["seed"] = seed_node["inputs"]["seed"]
         except Exception as e:
             with TASK_LOCK:
                 TASKS[tid]["status"] = "error"
                 TASKS[tid]["error"] = str(e)
             save_tasks()
+        if cancelled:
+            with TASK_LOCK:
+                TASKS[tid]["status"] = "cancelled"
+                TASKS[tid]["stage"] = "cancelled"
+                TASKS[tid].pop("cancelled", None)
         with COND:
-            TASK_ORDER.pop(0)
+            if TASK_ORDER and TASK_ORDER[0] == tid:
+                TASK_ORDER.pop(0)
             COND.notify_all()
         save_tasks()
 
@@ -557,7 +599,8 @@ def api_generate():
     p = {**p, "prefix": f"gen_{tid}"}
     with TASK_LOCK:
         TASKS[tid] = {"status": "queued", "payload": p, "images": [],
-                      "error": None, "created": time.time()}
+                      "error": None, "created": time.time(),
+                      "progress": 0, "stage": "queued"}
     with COND:
         TASK_ORDER.append(tid)
         COND.notify_all()
@@ -601,7 +644,8 @@ def api_upscale():
     tid = uuid.uuid4().hex[:12]
     with TASK_LOCK:
         TASKS[tid] = {"status": "queued", "payload": payload, "images": [],
-                      "error": None, "created": time.time()}
+                      "error": None, "created": time.time(),
+                      "progress": 0, "stage": "queued"}
     with COND:
         TASK_ORDER.append(tid)
         COND.notify_all()
@@ -614,11 +658,41 @@ def api_tasks():
     with TASK_LOCK:
         items = [{"id": tid, "status": t["status"], "images": t["images"],
                   "error": t["error"], "created": t["created"],
+                  "progress": t.get("progress", 0), "stage": t.get("stage", ""),
+                  "eta": t.get("eta"),
                   "prompt": t["payload"].get("prompt", "")[:80],
                   "payload": t["payload"]}
                  for tid, t in TASKS.items()]
     items.sort(key=lambda x: x["created"], reverse=True)
     return jsonify({"ok": True, "tasks": items[:50]})
+
+
+@app.route("/api/cancel", methods=["POST"])
+def api_cancel():
+    """取消任务：排队中直接移除；生成中标记取消并打断 ComfyUI 当前采样"""
+    data = request.get_json(force=True)
+    tid = data.get("task_id", "")
+    with TASK_LOCK:
+        t = TASKS.get(tid)
+        if not t:
+            return jsonify({"ok": False, "error": "任务不存在"})
+        if t["status"] == "queued":
+            if tid in TASK_ORDER:
+                TASK_ORDER.remove(tid)
+            t["status"] = "cancelled"
+            t["stage"] = "cancelled"
+            with COND:
+                COND.notify_all()
+            save_tasks()
+            return jsonify({"ok": True, "status": "cancelled"})
+        if t["status"] == "running":
+            t["cancelled"] = True
+            try:
+                comfy_post("/interrupt", {})
+            except Exception:
+                pass
+            return jsonify({"ok": True, "status": "cancelling"})
+        return jsonify({"ok": False, "error": "任务 %s 状态不可取消" % t["status"]})
 
 
 @app.route("/api/status/<pid>")

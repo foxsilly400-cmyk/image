@@ -654,21 +654,56 @@ async function pollTasks() {
     const LIMIT = 30;
     for (const t of r.tasks) {
       if (shown >= LIMIT) break;
-      // 进行中的任务：占位卡
+      // 进行中的任务：占位卡 + 进度条 + 取消
       if (t.status === "queued" || t.status === "running") {
         shown++;
         const card = document.createElement("div");
         card.className = "img-card pending";
         const ph = document.createElement("div");
         ph.className = "pending-ph";
-        ph.innerHTML = `<span class="spinner"></span><div>${t.status === "queued" ? "排队中" : "生成中"}</div>`;
+        const stageMap = { queued: "排队中", preparing: "准备中", sampling: "采样中", finishing: "收尾中" };
+        const stageText = stageMap[t.stage] || (t.status === "queued" ? "排队中" : "生成中");
+        const pct = t.progress != null ? Math.round(t.progress * 100) : 0;
+        ph.innerHTML = `<span class="spinner"></span><div>${stageText}${t.stage === "sampling" ? ` ${pct}%` : ""}</div>`;
+        const prog = document.createElement("div");
+        prog.className = "prog";
+        const fill = document.createElement("div");
+        fill.className = "prog-fill";
+        const fillW = t.stage === "sampling" || t.stage === "finishing" ? Math.max(pct, 3) : 3;
+        fill.style.width = fillW + "%";
+        prog.appendChild(fill);
         const bar = document.createElement("div");
         bar.className = "bar";
         const pr = document.createElement("span");
         pr.className = "t-prompt";
         pr.textContent = (t.prompt || "").slice(0, 60);
+        const cancel = document.createElement("button");
+        cancel.className = "cancel-btn";
+        cancel.textContent = "取消";
+        cancel.onclick = async () => {
+          cancel.disabled = true;
+          try {
+            const r = await api("/api/cancel", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ task_id: t.id }),
+            });
+            if (!r.ok) { cancel.disabled = false; $("status").textContent = "取消失败: " + (r.error || ""); }
+          } catch (e) { cancel.disabled = false; }
+        };
         bar.appendChild(pr);
-        card.append(ph, bar);
+        bar.appendChild(cancel);
+        card.append(ph, prog, bar);
+        gal.appendChild(card);
+        continue;
+      }
+      if (t.status === "cancelled") {
+        shown++;
+        const card = document.createElement("div");
+        card.className = "img-card error";
+        const ph = document.createElement("div");
+        ph.className = "pending-ph";
+        ph.innerHTML = `<div style="color:#d29922">已取消</div><div class="t-prompt">${(t.prompt || "").slice(0, 60)}</div>`;
+        card.appendChild(ph);
         gal.appendChild(card);
         continue;
       }
