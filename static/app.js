@@ -143,8 +143,9 @@ function applySettings(s) {
   saveSettings();
 }
 
-function imgUrl(img) {
-  return `/api/image?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${img.type || "output"}`;
+function imgUrl(img, thumb) {
+  const base = thumb ? "/api/thumb" : "/api/image";
+  return `${base}?filename=${encodeURIComponent(img.filename)}&subfolder=${encodeURIComponent(img.subfolder || "")}&type=${img.type || "output"}`;
 }
 
 // 已删除图片记录（sessionStorage，防轮询重新渲染）
@@ -293,8 +294,11 @@ async function init() {
       for (const id of ["ckpt", "vae"]) {
         if (s[id] && $(id).querySelector(`option[value="${s[id]}"]`)) $(id).value = s[id];
       }
-      // 默认模型固定 waiIllustriousSDXL_v170（列表第一个是 Illustrious-XL-v1.1，Pony 系色浓）
-      if (!s.ckpt && ck.items.includes("waiIllustriousSDXL_v170.safetensors")) $("ckpt").value = "waiIllustriousSDXL_v170.safetensors";
+      // 默认模型固定 waiIllustriousSDXL_v170（pornmaster 换序后也不再作为默认）
+      if (ck.items.includes("waiIllustriousSDXL_v170.safetensors") &&
+          (!s.ckpt || s.ckpt === "pornmaster_proSDXLV8.safetensors")) {
+        $("ckpt").value = "waiIllustriousSDXL_v170.safetensors";
+      }
     } else {
       $("conn").textContent = "连接失败";
       $("conn").classList.add("bad");
@@ -673,7 +677,14 @@ function createPendingCard(t) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task_id: t.id }),
       });
-      if (!r.ok) { cancel.disabled = false; $("status").textContent = "取消失败: " + (r.error || ""); }
+      if (r.ok) {
+        // 立即移除卡片，不等下一轮轮询
+        card.remove();
+        TASK_CARDS.delete(t.id);
+      } else {
+        cancel.disabled = false;
+        $("status").textContent = "取消失败: " + (r.error || "");
+      }
     } catch (e) { cancel.disabled = false; }
   };
   bar.appendChild(pr);
@@ -707,7 +718,8 @@ function createDoneCard(t) {
   const items = [];
   for (const img of t.images) {
     if (DELETED.has(img.filename)) continue;
-    items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename });
+    items.push({ url: imgUrl(img), name: img.filename, settings: t.payload, filename: img.filename,
+                 subfolder: img.subfolder || "", type: img.type || "output" });
   }
   if (!items.length) return { kind: "empty", cards: [], items: [] };
   const cards = [];
@@ -716,7 +728,7 @@ function createDoneCard(t) {
     const card = document.createElement("div");
     card.className = "img-card";
     const im = document.createElement("img");
-    im.src = it.url;
+    im.src = imgUrl(it, true);
     im.loading = "lazy";
     im.decoding = "async";
     im.fetchPriority = "low";
@@ -779,7 +791,7 @@ function createDoneCard(t) {
 
 function createTaskCard(t) {
   if (t.status === "queued" || t.status === "running") return createPendingCard(t);
-  if (t.status === "cancelled") return { kind: "state", cards: [createStateCard(`<div style="color:#d29922">已取消</div><div class="t-prompt">${(t.prompt || "").slice(0, 60)}</div>`)] };
+  if (t.status === "cancelled") return { kind: "empty", cards: [], items: [] };
   if (t.status === "error") return { kind: "state", cards: [createStateCard(`<div style="color:#e5484d">失败</div><div class="t-prompt">${(t.error || "").slice(0, 60)}</div>`)] };
   if (t.status === "done") return createDoneCard(t);
   return { kind: "empty", cards: [], items: [] };
@@ -799,6 +811,7 @@ async function pollTasks() {
     if (running) $("status").textContent = `队列中 ${running} 个任务...`;
     const seen = new Set();
     let shown = 0;
+    let prevEntry = null;  // 前一个已渲染任务卡（新卡按列表顺序插到它后面）
     const LIMIT = 30;
     for (const t of r.tasks) {
       if (shown >= LIMIT) break;
@@ -807,16 +820,37 @@ async function pollTasks() {
       if (!entry) {
         entry = createTaskCard(t);
         TASK_CARDS.set(t.id, entry);
-        for (const c of entryCards(entry)) gal.appendChild(c);
+        if (entry.kind !== "empty") {
+          const cards = entryCards(entry);
+          if (prevEntry) {
+            const pc = entryCards(prevEntry);
+            pc[pc.length - 1].after(...cards);
+          } else {
+            gal.prepend(...cards);
+          }
+        }
       } else if (entry.kind === "pending" && (t.status === "queued" || t.status === "running")) {
         updatePendingCard(entry, t);
+      } else if (t.status === "cancelled") {
+        // 已取消：从画廊移除（不显示）
+        for (const c of entryCards(entry)) c.remove();
+        TASK_CARDS.delete(t.id);
       } else if (entry.kind !== "done" && t.status === "done" && t.images && t.images.length) {
         // 完成：替换为图片卡
         for (const c of entryCards(entry)) c.remove();
         entry = createTaskCard(t);
         TASK_CARDS.set(t.id, entry);
-        for (const c of entryCards(entry)) gal.appendChild(c);
+        if (entry.kind !== "empty") {
+          const cards = entryCards(entry);
+          if (prevEntry) {
+            const pc = entryCards(prevEntry);
+            pc[pc.length - 1].after(...cards);
+          } else {
+            gal.prepend(...cards);
+          }
+        }
       }
+      if (entry.kind !== "empty") prevEntry = entry;
       if (entry.kind === "done") LB_ALL.push(...entry.items);
       shown += entry.kind === "done" ? Math.max(entry.items.length, 1) : 1;
     }

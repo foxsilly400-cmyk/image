@@ -13,6 +13,11 @@ from io import BytesIO
 from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
+try:
+    import websocket  # websocket-client：监听 ComfyUI 进度消息
+except Exception:
+    websocket = None
+
 COMFY = "http://127.0.0.1:8188"
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -334,6 +339,7 @@ def task_worker():
             payload = TASKS[tid]["payload"]
         cancelled = False
         try:
+            print(f"[worker] {tid} picked mode={payload.get('mode','gen')}", flush=True)
             if payload.get("mode") == "upscale":
                 # 复制源图到 input 目录（供 LoadImage 使用）
                 src = payload.get("src_image", "upscale_src.png")
@@ -345,45 +351,42 @@ def task_worker():
                         shutil.copy(out_f, in_f)
                 wf = build_upscale_workflow(payload)
             else:
+                print(f"[worker] {tid} building workflow", flush=True)
                 wf = build_workflow(payload)
+            print(f"[worker] {tid} posting to comfy", flush=True)
             resp = comfy_post("/prompt", {"prompt": wf})
             pid = resp["prompt_id"]
+            with TASK_LOCK:
+                TASKS[tid]["comfy_pid"] = pid
+            print(f"[worker] {tid} submitted {pid} {payload.get('mode','gen')}", flush=True)
             h = {}
-            # 轮询 ComfyUI：进度检查点 + 完成判定
-            for _ in range(1200):
-                time.sleep(2)
+            miss_cnt = 0
+            # 轮询 ComfyUI 完成（进度由 ws_progress_loop 更新）
+            for _ in range(900):
+                time.sleep(1)
                 with TASK_LOCK:
                     if TASKS[tid].get("cancelled"):
                         cancelled = True
                         break
-                # 进度检查点：/progress 里找当前 prompt 的采样进度
-                try:
-                    prog = comfy_get("/progress")
-                    matched = False
-                    for run in prog.get("running", []):
-                        if run.get("prompt_id") == pid:
-                            matched = True
-                            pv = run.get("progress", 0)
-                            with TASK_LOCK:
-                                TASKS[tid]["progress"] = round(pv, 3)
-                                TASKS[tid]["stage"] = "sampling" if pv > 0 else "preparing"
-                                eta = run.get("eta_seconds")
-                                if eta is not None:
-                                    TASKS[tid]["eta"] = int(eta)
-                            break
-                    if not matched:
-                        with TASK_LOCK:
-                            if TASKS[tid]["stage"] == "sampling":
-                                TASKS[tid]["stage"] = "finishing"
-                                TASKS[tid]["progress"] = 1.0
-                except Exception:
-                    pass
                 try:
                     h = comfy_get(f"/history/{pid}")
+                    if pid in h:
+                        break
+                    miss_cnt += 1
                 except Exception:
+                    miss_cnt += 1
+                    h = {}
                     continue
-                if pid in h:
-                    break
+                # 卡死自愈：history 长时间没有且队列里也没有 → 任务丢失
+                if miss_cnt % 10 == 0:
+                    try:
+                        q = comfy_get("/queue")
+                        qids = [x[1] for x in q.get("queue_running", [])] + [x[1] for x in q.get("queue_pending", [])]
+                    except Exception:
+                        qids = []
+                    if pid not in qids:
+                        print(f"[worker] {tid} lost (history miss x{miss_cnt}, not in comfy queue)", flush=True)
+                        raise RuntimeError("任务在 ComfyUI 侧丢失（不在队列也不在历史）")
             if not cancelled:
                 imgs = []
                 for out in h.get(pid, {}).get("outputs", {}).values():
@@ -416,8 +419,57 @@ def task_worker():
         save_tasks()
 
 
-threading.Thread(target=task_worker, daemon=True).start()
-load_tasks()
+def ws_progress_loop():
+    """监听 ComfyUI WebSocket progress 消息（新版 ComfyUI 无 /progress 接口），
+    按 comfy_pid 匹配更新任务进度。断线自动重连。"""
+    if websocket is None:
+        print("[ws] websocket-client not available", flush=True)
+        return
+
+    def on_message(ws, message):
+        try:
+            msg = json.loads(message)
+        except Exception:
+            return
+        if not isinstance(msg, dict) or msg.get("type") != "progress":
+            return
+        data = msg.get("data", {}) or {}
+        pid = data.get("prompt_id", "")
+        maxv = data.get("max", 0) or 0
+        if not pid or maxv <= 0:
+            return
+        pv = (data.get("value", 0) or 0) / maxv
+        with TASK_LOCK:
+            for t in TASKS.values():
+                if t.get("comfy_pid") == pid and t.get("status") == "running":
+                    t["progress"] = round(pv, 3)
+                    t["stage"] = "sampling" if pv > 0 else "preparing"
+
+    while True:
+        try:
+            print("[ws] connecting...", flush=True)
+            ws = websocket.WebSocketApp("ws://127.0.0.1:8188/ws?clientId=genui_progress",
+                                        on_message=on_message)
+            ws.run_forever(ping_interval=20, ping_timeout=10)
+            print("[ws] disconnected, reconnect in 3s", flush=True)
+        except Exception as e:
+            print("[ws] error:", type(e).__name__, str(e)[:150], flush=True)
+        time.sleep(3)
+
+
+def clear_comfy_queue():
+    """启动时清掉 ComfyUI 残留任务（旧进程提交的），避免新任务排队等幽灵任务"""
+    try:
+        comfy_post("/interrupt", {})
+    except Exception:
+        pass
+    try:
+        req = urllib.request.Request(COMFY + "/queue", b"{}",
+                                     {"Content-Type": "application/json"}, method="DELETE")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            r.read()
+    except Exception:
+        pass
 
 
 def comfy_get(path):
@@ -447,7 +499,10 @@ def _obj_names(class_type, key):
 
 @app.route("/api/checkpoints")
 def api_checkpoints():
-    return jsonify({"ok": True, "items": _obj_names("CheckpointLoaderSimple", "ckpt_name")})
+    items = _obj_names("CheckpointLoaderSimple", "ckpt_name")
+    # waiIllustriousSDXL_v170 固定排第一（页面默认模型）
+    items.sort(key=lambda n: (n != "waiIllustriousSDXL_v170.safetensors", n))
+    return jsonify({"ok": True, "items": items})
 
 
 @app.route("/api/loras")
@@ -743,6 +798,47 @@ def api_image():
         return jsonify({"ok": False, "error": str(e)})
 
 
+@app.route("/api/thumb")
+def api_thumb():
+    """画廊缩略图：服务端生成 webp 小图（缓存到 thumbs 目录），画廊卡加载它避免大图卡顿"""
+    fn = request.args.get("filename", "")
+    sub = request.args.get("subfolder", "")
+    typ = request.args.get("type", "output")
+    if not fn or ".." in fn or "/" in fn or "\\" in fn:
+        return jsonify({"ok": False, "error": "非法文件名"})
+    if sub and (".." in sub or "/" in sub or "\\" in sub):
+        return jsonify({"ok": False, "error": "非法路径"})
+    try:
+        if not ON_SERVER:
+            # 本地模式直接转发原图
+            with urllib.request.urlopen(f"{COMFY}/view?filename={fn}&subfolder={sub}&type={typ}",
+                                        timeout=60) as r:
+                resp = send_file(BytesIO(r.read()), mimetype="image/png",
+                                 conditional=True, max_age=31536000)
+                return resp
+        base = SERVER_BASE
+        if typ == "input":
+            base = os.path.join(base, "input")
+        elif typ == "temp":
+            base = os.path.join(base, "temp")
+        else:
+            base = os.path.join(base, "output")
+        p = os.path.join(base, sub, fn)
+        if not os.path.exists(p):
+            return jsonify({"ok": False, "error": "文件不存在"}), 404
+        cache_dir = os.path.join(SERVER_BASE, "thumbs")
+        cache = os.path.join(cache_dir, fn + ".webp")
+        if not os.path.exists(cache) or os.path.getmtime(cache) < os.path.getmtime(p):
+            os.makedirs(cache_dir, exist_ok=True)
+            from PIL import Image
+            im = Image.open(p)
+            im.thumbnail((360, 360))
+            im.convert("RGB").save(cache, "WEBP", quality=82)
+        return send_file(cache, mimetype="image/webp", conditional=True, max_age=31536000)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 def _ssh(args):
     """本地模式经 SSH 执行；服务器模式直接本地执行"""
     if ON_SERVER:
@@ -766,6 +862,12 @@ def api_delete_image():
                 os.remove(p)
         except Exception as e:
             return jsonify({"ok": False, "error": str(e)})
+        try:
+            thumb = os.path.join(SERVER_BASE, "thumbs", fn + ".webp")
+            if os.path.exists(thumb):
+                os.remove(thumb)
+        except Exception:
+            pass
     else:
         r = _ssh([f"/root/miniconda3/bin/python -c 'import os; os.remove(\"{SERVER_BASE}/output/{fn}\")'"])
         if r.returncode != 0:
@@ -848,5 +950,10 @@ def api_triggers():
 
 
 if __name__ == "__main__":
+    # 所有定义就绪后再启动线程/恢复队列（避免模块加载期间 worker 引用未定义名字）
+    threading.Thread(target=task_worker, daemon=True).start()
+    threading.Thread(target=ws_progress_loop, daemon=True).start()
+    load_tasks()
+    clear_comfy_queue()
     port = int(os.environ.get("GENUI_PORT", "8000"))
     app.run(host="0.0.0.0", port=port, debug=False)
