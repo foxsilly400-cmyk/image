@@ -117,6 +117,7 @@ function buildPayload() {
       keep_face: $("keepFace").checked,
       pose_lock: $("poseLock").checked,
       skin_keep: $("skinKeep").checked,
+      auto_mask: MASK_MODE,  // 自动遮罩来源（body/all_but_face），后端跳过二次脸部保护防误检
     };
   }
   return p;
@@ -476,15 +477,30 @@ document.querySelectorAll(".tab").forEach(t => {
 // ---------- 生成（队列） ----------
 async function submitGen() {
   if ($("inpaintOn").checked && REF_IMAGE) {
-    if (!MASK_CANVAS) { $("status").textContent = "请先上传参考图再涂抹"; return; }
-    const blob = await new Promise((r) => MASK_CANVAS.toBlob(r, "image/png"));
-    if (!blob) { $("status").textContent = "mask 导出失败"; return; }
-    const fd = new FormData();
-    fd.append("file", blob, "mask_" + Date.now() + ".png");
-    $("status").textContent = "上传涂抹区域...";
-    const resp = await api("/api/upload", { method: "POST", body: fd });
-    if (!resp.ok) { $("status").textContent = "mask 上传失败: " + resp.error; return; }
-    MASK_IMAGE = resp.name;
+    if (MASK_CANVAS && !($("keepFace").checked && maskCanvasEmpty())) {
+      // 有涂抹内容（或未勾保留脸部）：正常导出画布遮罩
+      const blob = await new Promise((r) => MASK_CANVAS.toBlob(r, "image/png"));
+      if (!blob) { $("status").textContent = "mask 导出失败"; return; }
+      const fd = new FormData();
+      fd.append("file", blob, "mask_" + Date.now() + ".png");
+      $("status").textContent = "上传涂抹区域...";
+      const resp = await api("/api/upload", { method: "POST", body: fd });
+      if (!resp.ok) { $("status").textContent = "mask 上传失败: " + resp.error; return; }
+      MASK_IMAGE = resp.name;
+      // MASK_MODE 保持不变：自动遮罩(带笔画)仍标记为自动来源，后端跳过二次脸部保护
+    } else if ($("keepFace").checked && !MASK_MODE) {
+      // 勾了保留脸部但没涂抹：自动生成“除脸外全图重绘”遮罩（保留脸部独立功能）
+      const r = await autoMask("all_but_face");
+      if (!r) return;
+    } else if (!MASK_CANVAS) {
+      $("status").textContent = "请先上传参考图再涂抹"; return;
+    }
+  } else if ($("keepFace").checked && REF_IMAGE && !MASK_MODE) {
+    // 保留脸部独立使用：不开启局部重绘也能保住脸（自动除脸外遮罩）
+    $("inpaintOn").checked = true;
+    $("inpaintBox").style.display = "block";
+    const r = await autoMask("all_but_face");
+    if (!r) return;
   }
   const payload = buildPayload();
   $("status").textContent = "已加入队列";
@@ -624,30 +640,109 @@ document.addEventListener("click", (e) => {
 // ---------- img2img 参考图上传 ----------
 let REF_FILE = null;
 let MASK_IMAGE = "";
+let MASK_MODE = "";  // 当前遮罩来源: body=一键去衣 / all_but_face=保留脸部 / 空=手动画布
 let MASK_CANVAS = null, MASK_CTX = null, MASK_SRC_IMG = null;
 let MASK_PAINTING = false, MASK_ERASING = false;
 
 function initMaskCanvas(file) {
-  const img = new Image();
-  img.onload = () => {
-    const maxSide = 1024;
-    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
-    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-    const cv = $("maskCanvas");
-    cv.width = w; cv.height = h;
-    cv.style.display = "block";
-    const ctx = cv.getContext("2d");
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(img, 0, 0, w, h);
-    MASK_SRC_IMG = img;
-    MASK_CANVAS = document.createElement("canvas");
-    MASK_CANVAS.width = w; MASK_CANVAS.height = h;
-    MASK_CTX = MASK_CANVAS.getContext("2d");
-    MASK_IMAGE = "";
-    $("maskHint") && ($("maskHint").textContent = "");
-  };
-  img.src = URL.createObjectURL(file);
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxSide = 1024;
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const cv = $("maskCanvas");
+      cv.width = w; cv.height = h;
+      cv.style.display = "block";
+      const ctx = cv.getContext("2d");
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      MASK_SRC_IMG = img;
+      MASK_CANVAS = document.createElement("canvas");
+      MASK_CANVAS.width = w; MASK_CANVAS.height = h;
+      MASK_CTX = MASK_CANVAS.getContext("2d");
+      MASK_IMAGE = "";
+      MASK_MODE = "";
+      $("maskHint") && ($("maskHint").textContent = "");
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = URL.createObjectURL(file);
+  });
 }
+
+function ensureMaskCanvas() {
+  if (MASK_CANVAS) return Promise.resolve(true);
+  if (!REF_FILE) return Promise.resolve(false);
+  return initMaskCanvas(REF_FILE);
+}
+
+// 画布显示层：原图 + 重绘区半透明红预览（从 MASK_CANVAS 重建）
+function renderCanvasOverlay() {
+  const cv = $("maskCanvas");
+  if (!MASK_CANVAS || !MASK_SRC_IMG) return;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(MASK_SRC_IMG, 0, 0, cv.width, cv.height);
+  ctx.fillStyle = "rgba(255,60,60,0.35)";
+  const d = MASK_CTX.getImageData(0, 0, MASK_CANVAS.width, MASK_CANVAS.height).data;
+  for (let y = 0; y < MASK_CANVAS.height; y += 2) {
+    for (let x = 0; x < MASK_CANVAS.width; x += 2) {
+      if (d[(y * MASK_CANVAS.width + x) * 4 + 3] > 128) ctx.fillRect(x, y, 2, 2);
+    }
+  }
+}
+
+function maskCanvasEmpty() {
+  if (!MASK_CANVAS) return true;
+  const d = MASK_CTX.getImageData(0, 0, MASK_CANVAS.width, MASK_CANVAS.height).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return false;
+  return true;
+}
+
+// 服务端生成自动遮罩（body=身体区一键去衣 / all_but_face=保留脸部）并并入画布预览
+async function autoMask(mode) {
+  if (!REF_IMAGE) { $("status").textContent = "请先上传参考图"; return null; }
+  $("status").textContent = "生成自动遮罩...";
+  const r = await api("/api/automask", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ src_image: REF_IMAGE, mode }),
+  });
+  if (!r.ok) { $("status").textContent = "自动遮罩失败: " + (r.error || ""); return null; }
+  MASK_IMAGE = r.mask_image;
+  MASK_MODE = mode;
+  await ensureMaskCanvas();
+  if (MASK_CANVAS && MASK_SRC_IMG) {
+    // 遮罩并入画布（白=重绘），画笔可在上面继续加涂/擦除
+    const im = new Image();
+    await new Promise((res, rej) => {
+      im.onload = res; im.onerror = rej;
+      im.src = "/api/image?filename=" + encodeURIComponent(MASK_IMAGE) + "&type=input";
+    });
+    MASK_CTX.clearRect(0, 0, MASK_CANVAS.width, MASK_CANVAS.height);
+    MASK_CTX.drawImage(im, 0, 0, MASK_CANVAS.width, MASK_CANVAS.height);
+    renderCanvasOverlay();
+  }
+  return r;
+}
+
+$("autoUndress").onclick = async () => {
+  if (!REF_IMAGE) { $("status").textContent = "请先上传参考图"; return; }
+  $("inpaintOn").checked = true;
+  $("inpaintBox").style.display = "block";
+  $("keepFace").checked = true;
+  $("poseLock").checked = true;
+  $("skinKeep").checked = true;
+  const r = await autoMask("body");
+  if (!r) return;
+  const faces = r.faces || 0;
+  if ($("prompt").value.trim()) {
+    $("status").textContent = "自动去衣遮罩已生成（检测到 " + faces + " 张脸），正在提交...";
+    submitGen();
+  } else {
+    $("status").textContent = "自动去衣遮罩已生成（检测到 " + faces + " 张脸），填好提示词后点生成";
+  }
+};
 
 function maskStroke(e) {
   const cv = $("maskCanvas");
@@ -692,6 +787,7 @@ $("eraserBtn").onclick = () => {
 $("clearMask").onclick = () => {
   if (!MASK_CANVAS || !MASK_SRC_IMG) return;
   MASK_CTX.clearRect(0, 0, MASK_CANVAS.width, MASK_CANVAS.height);
+  MASK_IMAGE = ""; MASK_MODE = "";
   const cv = $("maskCanvas");
   const ctx = cv.getContext("2d");
   ctx.clearRect(0, 0, cv.width, cv.height);

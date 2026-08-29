@@ -98,6 +98,8 @@ input[type=file] { padding: 6px; font-size: 12px; }
   border-color: rgba(91, 140, 255, 0.6); color: var(--text);
   background: rgba(91, 140, 255, 0.1);
 }
+.chip-hot { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+.chip-hot:hover { background: #8b5cf6; border-color: #8b5cf6; color: #fff; }
 .lora-row { display: flex; gap: 6px; align-items: center; }
 .lora-row select { flex: 1; }
 .lora-row input[type=number] { width: 64px; }

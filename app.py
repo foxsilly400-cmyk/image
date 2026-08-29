@@ -561,6 +561,73 @@ def invert_mask_alpha(mask_name):
     cv2.imwrite(mask_path, mask)
 
 
+def auto_mask(src_name, mode="body"):
+    """生成自动遮罩（前端风格：白色 alpha 255 = 重绘区，透明 = 保留区）。
+    mode='body'：最低人脸下沿以下的整幅区域（一键去衣，配合姿势/肤色锁保持身体结构）
+    mode='all_but_face'：除人脸外全部重绘（保留脸部独立功能，无需手动涂抹选区）
+    返回 (mask文件名, 检测到的人脸数)。"""
+    import cv2
+    import numpy as np
+    input_dir = "/root/autodl-tmp/ComfyUI/input" if ON_SERVER else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "ComfyUI", "input")
+    src_path = os.path.join(input_dir, src_name)
+    if not os.path.exists(src_path):
+        return None, 0
+    src = cv2.imread(src_path)
+    if src is None:
+        return None, 0
+    H, W = src.shape[:2]
+    gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    faces = cascade.detectMultiScale(gray, 1.1, 5,
+                                     minSize=(int(min(H, W) * 0.06), int(min(H, W) * 0.06)))
+    mask = np.zeros((H, W, 4), dtype=np.uint8)  # 全透明 = 保留原图
+    if len(faces):
+        if mode == "body":
+            # 脖子线 = 最低可信人脸的下沿（只认中心在上 2/3 的脸，
+            # 防 Haar 在身体/背景上的误检把脖子线压到底部）。
+            # 无可信人脸时按常见构图取 22% 高作脖子线，脸区交给后端 keep_face 兑底。
+            candidates = [y + h for (x, y, w, h) in faces if (y + h / 2) < H * 0.67]
+            if candidates:
+                neck = max(candidates)
+            else:
+                neck = int(H * 0.22)
+            neck = min(H - 1, neck + int(H * 0.03))
+            mask[neck:, :, :] = 255
+        else:  # all_but_face：全图重绘，挖掉人脸区（同样只挖可信脸）
+            mask[:, :, :] = 255
+            for (x, y, w, h) in faces:
+                if (y + h / 2) >= H * 0.67:
+                    continue
+                pad = int(max(w, h) * 0.18)
+                x0 = max(0, x - pad); y0 = max(0, y - pad)
+                x1 = min(W, x + w + pad); y1 = min(H, y + h + pad)
+                mask[y0:y1, x0:x1, :] = 0
+    else:
+        mask[:, :, :] = 255  # 未检测到人脸：整图重绘（无脸可保）
+    fname = "automask_%d.png" % int(time.time())
+    out = os.path.join(input_dir, fname)
+    cv2.imwrite(out, mask)
+    return fname, len(faces)
+
+
+@app.route("/api/automask", methods=["POST"])
+def api_automask():
+    """生成自动遮罩（前端风格：白=重绘）。mode: body=身体区(一键去衣) / all_but_face=除脸外全部"""
+    data = request.get_json(force=True)
+    src = (data.get("src_image") or "").strip()
+    mode = data.get("mode", "body")
+    if not src:
+        return jsonify({"ok": False, "error": "缺少参考图"})
+    try:
+        fname, nfaces = auto_mask(src, mode)
+        if not fname:
+            return jsonify({"ok": False, "error": "自动遮罩生成失败"})
+        return jsonify({"ok": True, "mask_image": fname, "faces": nfaces})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 def protect_faces(src_name, mask_name):
     """局部重绘：把人脸区域从 mask 中挖掉（alpha 置 255=保留），保持脸部不变。返回保护的脸数。"""
     import cv2
@@ -751,7 +818,9 @@ def api_generate():
     if inp and inp.get("mask_image"):
         try:
             invert_mask_alpha(inp["mask_image"])
-            if inp.get("keep_face", True):
+            # 自动遮罩生成时已按可信脸位置挖好脸区，跳过 protect_faces（
+            # 避免 Haar 在身体/背景上的误检把衣服区域当脸保留，导致畸形）
+            if inp.get("keep_face", True) and not inp.get("auto_mask"):
                 n = protect_faces(p.get("src_image", ""), inp["mask_image"])
                 print(f"[inpaint] 脸部保护: {n} 张脸", flush=True)
         except Exception as e:
