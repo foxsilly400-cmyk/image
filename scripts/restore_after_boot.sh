@@ -34,7 +34,8 @@ for i in $(seq 1 24); do
   C=$(/usr/bin/curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:8188/system_stats)
   G=$(/usr/bin/curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:6006/)
   echo "  [$i] comfy=$C genui=$G"
-  if [ "$C" = "200" ] && [ "$G" = "200" ]; then
+  # 非 000（连不上）即视为就绪；genui 的 401 是登录拦截，属正常存活
+  if [ "$C" != "000" ] && [ "$G" != "000" ]; then
     echo "[OK] ComfyUI + genui + watchdog 均就绪"
     exit 0
   fi
