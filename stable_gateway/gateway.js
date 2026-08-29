@@ -57,7 +57,9 @@ const server = http.createServer((req, res) => {
         return;
       }
       const script = path.join(__dirname, '..', '..', 'scripts', 'reset_instance.py');
+      const dbg = 'ENVDBG PATH=' + (process.env.PATH || '').split(';').filter(x => /python/i.test(x)).join('|') + ' PROXY=' + (process.env.HTTP_PROXY || process.env.http_proxy || '') + ' HTTPS_PROXY=' + (process.env.HTTPS_PROXY || process.env.https_proxy || '') + ' CWD=' + process.cwd() + '\n';
       res.writeHead(200, cors({ 'content-type': 'text/plain; charset=utf-8' }));
+      res.write(dbg);
       const py = spawn('python', [script, text], {
         windowsHide: true,
         env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
