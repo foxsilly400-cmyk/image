@@ -66,7 +66,7 @@ def api_login():
 ON_SERVER = os.path.exists("/root/autodl-tmp/ComfyUI")
 SERVER_BASE = "/root/autodl-tmp/ComfyUI"
 SSH_KEY = os.path.expanduser(r"~/.ssh/id_ed25519")
-SSH_TARGET = "root@connect.westc.seetacloud.com"
+SSH_TARGET = "connect.westc.seetacloud.com"
 SSH_PORT = "25562"
 
 # ---------- 任务队列 ----------
