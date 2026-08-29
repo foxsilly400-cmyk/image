@@ -48,6 +48,23 @@
           <img id="refPreview" style="max-height:96px;display:none;border-radius:8px" alt="">
           <span id="refName" style="font-size:12px;color:#888"></span>
         </div>
+        <label class="checkline">
+          <input type="checkbox" id="inpaintOn">
+          <span>局部重绘（涂抹区域重绘）</span>
+        </label>
+        <div id="inpaintBox" style="display:none">
+          <canvas id="maskCanvas" style="max-width:100%;border:1px solid #555;border-radius:8px;display:none;touch-action:none;cursor:crosshair"></canvas>
+          <div style="margin-top:6px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:12px">笔刷 <input id="brushSize" type="range" min="5" max="150" value="45" style="vertical-align:middle"></label>
+            <button type="button" class="chip" id="eraserBtn">橡皮</button>
+            <button type="button" class="chip" id="clearMask">清除</button>
+            <label class="checkline" style="font-size:12px">
+              <input type="checkbox" id="keepFace" checked>
+              <span>锁定脸部</span>
+            </label>
+          </div>
+          <p class="hint">涂抹要重绘的区域（衣服等）。勾选锁定脸部后，脸部会自动从重绘区域排除。</p>
+        </div>
         <label style="margin-top:8px">重绘幅度 (denoise，越高越偏离原图)
           <input id="denoise" type="number" value="0.5" step="0.05" min="0.1" max="1">
         </label>

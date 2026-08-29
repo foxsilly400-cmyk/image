@@ -101,7 +101,7 @@ function collectSettings() {
     width: parseInt($("width").value), height: parseInt($("height").value),
     seed: parseInt($("seed").value), batch: parseInt($("batch").value),
     clip_skip: parseInt($("clipSkip").value) || 1,
-    src_image: ($("i2iOn").checked && REF_IMAGE) ? REF_IMAGE : "",
+    src_image: (($("i2iOn").checked || $("inpaintOn").checked) && REF_IMAGE) ? REF_IMAGE : "",
     denoise: parseFloat($("denoise").value),
   };
 }
@@ -110,6 +110,9 @@ function buildPayload() {
   const p = collectSettings();
   if ($("enhCompat").checked) {
     p.sampler = "euler"; p.scheduler = "normal"; p.cfg = 5; p.clip_skip = 1;
+  }
+  if ($("inpaintOn").checked && MASK_IMAGE) {
+    p.inpaint = { mask_image: MASK_IMAGE, keep_face: $("keepFace").checked };
   }
   return p;
 }
@@ -467,6 +470,17 @@ document.querySelectorAll(".tab").forEach(t => {
 
 // ---------- 生成（队列） ----------
 async function submitGen() {
+  if ($("inpaintOn").checked && REF_IMAGE) {
+    if (!MASK_CANVAS) { $("status").textContent = "请先上传参考图再涂抹"; return; }
+    const blob = await new Promise((r) => MASK_CANVAS.toBlob(r, "image/png"));
+    if (!blob) { $("status").textContent = "mask 导出失败"; return; }
+    const fd = new FormData();
+    fd.append("file", blob, "mask_" + Date.now() + ".png");
+    $("status").textContent = "上传涂抹区域...";
+    const resp = await api("/api/upload", { method: "POST", body: fd });
+    if (!resp.ok) { $("status").textContent = "mask 上传失败: " + resp.error; return; }
+    MASK_IMAGE = resp.name;
+  }
   const payload = buildPayload();
   $("status").textContent = "已加入队列";
   const resp = await api("/api/generate", {
@@ -603,9 +617,86 @@ document.addEventListener("click", (e) => {
 });
 
 // ---------- img2img 参考图上传 ----------
+let REF_FILE = null;
+let MASK_IMAGE = "";
+let MASK_CANVAS = null, MASK_CTX = null, MASK_SRC_IMG = null;
+let MASK_PAINTING = false, MASK_ERASING = false;
+
+function initMaskCanvas(file) {
+  const img = new Image();
+  img.onload = () => {
+    const maxSide = 1024;
+    const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+    const cv = $("maskCanvas");
+    cv.width = w; cv.height = h;
+    cv.style.display = "block";
+    const ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    MASK_SRC_IMG = img;
+    MASK_CANVAS = document.createElement("canvas");
+    MASK_CANVAS.width = w; MASK_CANVAS.height = h;
+    MASK_CTX = MASK_CANVAS.getContext("2d");
+    MASK_IMAGE = "";
+    $("maskHint") && ($("maskHint").textContent = "");
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+function maskStroke(e) {
+  const cv = $("maskCanvas");
+  const r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (cv.width / r.width);
+  const y = (e.clientY - r.top) * (cv.height / r.height);
+  const size = parseInt($("brushSize").value);
+  // mask 层：白色 alpha 255 = 重绘区
+  MASK_CTX.globalCompositeOperation = MASK_ERASING ? "destination-out" : "source-over";
+  MASK_CTX.fillStyle = "rgba(255,255,255,1)";
+  MASK_CTX.beginPath(); MASK_CTX.arc(x, y, size / 2, 0, Math.PI * 2); MASK_CTX.fill();
+  // 显示层：半透明红预览（橡皮时挖掉红恢复原图）
+  const ctx = cv.getContext("2d");
+  ctx.globalCompositeOperation = MASK_ERASING ? "destination-out" : "source-over";
+  ctx.fillStyle = "rgba(255,60,60,0.35)";
+  ctx.beginPath(); ctx.arc(x, y, size / 2, 0, Math.PI * 2); ctx.fill();
+  ctx.globalCompositeOperation = "source-over";
+}
+
+function setupMaskCanvasEvents() {
+  const cv = $("maskCanvas");
+  cv.addEventListener("pointerdown", (e) => {
+    MASK_PAINTING = true;
+    cv.setPointerCapture && cv.setPointerCapture(e.pointerId);
+    maskStroke(e);
+  });
+  cv.addEventListener("pointermove", (e) => { if (MASK_PAINTING) maskStroke(e); });
+  cv.addEventListener("pointerup", () => MASK_PAINTING = false);
+  cv.addEventListener("pointercancel", () => MASK_PAINTING = false);
+}
+setupMaskCanvasEvents();
+
+$("inpaintOn").addEventListener("change", () => {
+  $("inpaintBox").style.display = $("inpaintOn").checked ? "block" : "none";
+  if ($("inpaintOn").checked && REF_FILE && !MASK_CANVAS) initMaskCanvas(REF_FILE);
+});
+$("eraserBtn").onclick = () => {
+  MASK_ERASING = !MASK_ERASING;
+  $("eraserBtn").textContent = MASK_ERASING ? "橡皮(开)" : "橡皮";
+  $("eraserBtn").style.outline = MASK_ERASING ? "2px solid #f66" : "";
+};
+$("clearMask").onclick = () => {
+  if (!MASK_CANVAS || !MASK_SRC_IMG) return;
+  MASK_CTX.clearRect(0, 0, MASK_CANVAS.width, MASK_CANVAS.height);
+  const cv = $("maskCanvas");
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(MASK_SRC_IMG, 0, 0, cv.width, cv.height);
+};
+
 $("refFile").addEventListener("change", async (e) => {
   const f = e.target.files[0];
   if (!f) return;
+  REF_FILE = f;
   const fd = new FormData();
   fd.append("file", f);
   $("status").textContent = "上传参考图...";
@@ -618,6 +709,7 @@ $("refFile").addEventListener("change", async (e) => {
     $("refPreview").src = URL.createObjectURL(f);
     $("refPreview").style.display = "block";
     $("status").textContent = "参考图已上传: " + j.name;
+    if ($("inpaintOn").checked) initMaskCanvas(f);
   } catch (err) {
     $("status").textContent = "上传失败: " + err;
   }

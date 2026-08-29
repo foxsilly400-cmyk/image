@@ -543,6 +543,55 @@ def api_upload():
         return jsonify({"ok": False, "error": str(e)})
 
 
+def invert_mask_alpha(mask_name):
+    """前端 mask 白笔刷 alpha=255 表示重绘区；ComfyUI LoadImage 的 MASK=1-alpha（1=重绘）。
+    统一反转 alpha：重绘区 alpha=0，保留区 alpha=255。"""
+    import cv2
+    input_dir = "/root/autodl-tmp/ComfyUI/input" if ON_SERVER else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "ComfyUI", "input")
+    mask_path = os.path.join(input_dir, mask_name)
+    mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+    if mask is None:
+        return
+    if mask.shape[2] == 4:
+        mask[:, :, 3] = 255 - mask[:, :, 3]
+    else:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2BGRA)
+        mask[:, :, 3] = 0  # 无 alpha 的 mask 视为全图重绘
+    cv2.imwrite(mask_path, mask)
+
+
+def protect_faces(src_name, mask_name):
+    """局部重绘：把人脸区域从 mask 中挖掉（alpha 置 255=保留），保持脸部不变。返回保护的脸数。"""
+    import cv2
+    input_dir = "/root/autodl-tmp/ComfyUI/input" if ON_SERVER else os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "ComfyUI", "input")
+    src_path = os.path.join(input_dir, src_name)
+    mask_path = os.path.join(input_dir, mask_name)
+    if not (os.path.exists(src_path) and os.path.exists(mask_path)):
+        return 0
+    src = cv2.imread(src_path)
+    mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+    if src is None or mask is None:
+        return 0
+    H, W = src.shape[:2]
+    mh, mw = mask.shape[:2]
+    gray = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
+    cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    faces = cascade.detectMultiScale(gray, 1.1, 5, minSize=(int(min(H, W) * 0.06), int(min(H, W) * 0.06)))
+    sx, sy = mw / W, mh / H
+    for (x, y, w, h) in faces:
+        pad = int(max(w, h) * 0.18)
+        x0 = max(0, int((x - pad) * sx)); y0 = max(0, int((y - pad) * sy))
+        x1 = min(mw, int((x + w + pad) * sx)); y1 = min(mh, int((y + h + pad) * sy))
+        if mask.shape[2] == 4:
+            mask[y0:y1, x0:x1, 3] = 255  # 保留区
+        else:
+            mask[y0:y1, x0:x1] = 255
+    cv2.imwrite(mask_path, mask)
+    return len(faces)
+
+
 def build_workflow(p):
     ckpt = p["checkpoint"]
     loras = p.get("loras", [])
@@ -612,12 +661,26 @@ def build_workflow(p):
     nodes["3"] = {"class_type": "EmptyLatentImage",
                   "inputs": {"width": width, "height": height, "batch_size": batch}}
     latent_ref, ks_denoise = ["3", 0], 1.0
-    # img2img：参考图编码为 latent，用 denoise 控制重绘幅度
-    if src_image:
+    inpaint = p.get("inpaint") if isinstance(p.get("inpaint"), dict) else None
+    if inpaint and inpaint.get("mask_image") and src_image:
+        # 局部重绘：mask 内重绘，mask 外保持原图（脸已被 protect_faces 挖掉）
+        nodes["src"] = {"class_type": "LoadImage", "inputs": {"image": src_image}}
+        nodes["mask_im"] = {"class_type": "LoadImage", "inputs": {"image": inpaint["mask_image"]}}
+        # LoadImage 输出 [1] = MASK（alpha 通道），直接用，无需 ImageToMask
+        nodes["enc_i"] = {"class_type": "VAEEncodeForInpaint",
+                          "inputs": {"pixels": ["src", 0], "vae": vae_ref,
+                                     "mask": ["mask_im", 1], "grow_mask_by": 8}}
+        latent_ref, ks_denoise = ["enc_i", 0], 1.0
+        inpaint_active = True
+    elif src_image:
+        # img2img：参考图编码为 latent，用 denoise 控制重绘幅度
         nodes["src"] = {"class_type": "LoadImage", "inputs": {"image": src_image}}
         nodes["enc"] = {"class_type": "VAEEncode",
                          "inputs": {"pixels": ["src", 0], "vae": vae_ref}}
         latent_ref, ks_denoise = ["enc", 0], denoise
+        inpaint_active = False
+    else:
+        inpaint_active = False
     nodes["10"] = {"class_type": "KSampler",
                    "inputs": {"model": cur_model, "positive": pos_ref, "negative": neg_ref,
                               "latent_image": latent_ref, "seed": seed, "steps": steps, "cfg": cfg,
@@ -641,8 +704,17 @@ def build_workflow(p):
 
     nodes["8"] = {"class_type": "VAEDecode", "inputs": {"samples": samp_ref, "vae": vae_ref}}
     prefix = p.get("prefix", "gen")
-    nodes["9"] = {"class_type": "SaveImage",
-                  "inputs": {"images": ["8", 0], "filename_prefix": prefix}}
+    if inpaint_active:
+        # 重绘结果贴回原图（mask 外保持原图像素）
+        nodes["8b"] = {"class_type": "ImageCompositeMasked",
+                       "inputs": {"destination": ["src", 0], "source": ["8", 0],
+                                  "x": 0, "y": 0, "resize_source": False,
+                                  "mask": ["mask_im", 1]}}
+        nodes["9"] = {"class_type": "SaveImage",
+                      "inputs": {"images": ["8b", 0], "filename_prefix": prefix}}
+    else:
+        nodes["9"] = {"class_type": "SaveImage",
+                      "inputs": {"images": ["8", 0], "filename_prefix": prefix}}
     return nodes
 
 
@@ -650,6 +722,15 @@ def build_workflow(p):
 def api_generate():
     """入队生成，立即返回 task_id"""
     p = request.get_json(force=True)
+    inp = p.get("inpaint") if isinstance(p.get("inpaint"), dict) else None
+    if inp and inp.get("mask_image"):
+        try:
+            invert_mask_alpha(inp["mask_image"])
+            if inp.get("keep_face", True):
+                n = protect_faces(p.get("src_image", ""), inp["mask_image"])
+                print(f"[inpaint] 脸部保护: {n} 张脸", flush=True)
+        except Exception as e:
+            print(f"[inpaint] mask 处理失败: {e}", flush=True)
     tid = uuid.uuid4().hex[:12]
     p = {**p, "prefix": f"gen_{tid}"}
     with TASK_LOCK:
