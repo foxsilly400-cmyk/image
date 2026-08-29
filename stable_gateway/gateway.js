@@ -56,7 +56,7 @@ const server = http.createServer((req, res) => {
         res.end('格式错误，示例:\n  ssh -p 25562 root@host 密码 https://公网:8443\n');
         return;
       }
-      const script = path.join(__dirname, '..', '..', 'scripts', 'reset_instance.py');
+      const script = path.join(__dirname, '..', 'scripts', 'reset_instance.py');
       res.writeHead(200, cors({ 'content-type': 'text/plain; charset=utf-8' }));
       const py = spawn('python', [script, text], {
         windowsHide: true,
