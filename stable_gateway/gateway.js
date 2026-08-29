@@ -57,33 +57,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       const script = path.join(__dirname, '..', '..', 'scripts', 'reset_instance.py');
-      const dbg = 'ENVDBG PATH=' + (process.env.PATH || '').split(';').filter(x => /python/i.test(x)).join('|') + ' PROXY=' + (process.env.HTTP_PROXY || process.env.http_proxy || '') + ' HTTPS_PROXY=' + (process.env.HTTPS_PROXY || process.env.https_proxy || '') + ' CWD=' + process.cwd() + '\n';
       res.writeHead(200, cors({ 'content-type': 'text/plain; charset=utf-8' }));
-      res.write(dbg);
-      // 临时：gateway 环境下 paramiko 最小测试
-      const tcode = [
-        'import paramiko, socket, sys',
-        'print("PYEXE", sys.executable)',
-        'try:',
-        '    print("DNS", socket.getaddrinfo("connect.westc.seetacloud.com", 25562)[0][4])',
-        'except Exception as e:',
-        '    print("DNSFAIL", repr(e))',
-        'c = paramiko.SSHClient()',
-        'c.set_missing_host_key_policy(paramiko.AutoAddPolicy())',
-        'try:',
-        '    c.connect("connect.westc.seetacloud.com", port=25562, username="root", password="ersansan2333", timeout=15)',
-        '    print("PMK_OK")',
-        '    c.close()',
-        'except Exception as e:',
-        '    print("PMKFAIL", repr(e))'
-      ].join('\n');
-      const tp = spawn('python', ['-c', tcode], {
-        windowsHide: true,
-        env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
-      });
-      tp.stdout.on('data', (d) => res.write(d));
-      tp.stderr.on('data', (d) => res.write(d));
-      tp.on('close', (tc) => res.write('\n[test exit ' + tc + ']\n'));
       const py = spawn('python', [script, text], {
         windowsHide: true,
         env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
