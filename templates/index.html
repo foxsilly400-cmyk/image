@@ -62,8 +62,16 @@
               <input type="checkbox" id="keepFace" checked>
               <span>锁定脸部</span>
             </label>
+            <label class="checkline" style="font-size:12px">
+              <input type="checkbox" id="poseLock" checked>
+              <span>姿势锁定</span>
+            </label>
+            <label class="checkline" style="font-size:12px">
+              <input type="checkbox" id="skinKeep" checked>
+              <span>肤色保持</span>
+            </label>
           </div>
-          <p class="hint">涂抹要重绘的区域（衣服等）。勾选锁定脸部后，脸部会自动从重绘区域排除。</p>
+          <p class="hint">涂抹要重绘的区域（衣服等）。姿势锁定用骨架约束姿势，肤色保持参考原图皮肤质感。</p>
         </div>
         <label style="margin-top:8px">重绘幅度 (denoise，越高越偏离原图)
           <input id="denoise" type="number" value="0.5" step="0.05" min="0.1" max="1">

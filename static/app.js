@@ -112,7 +112,12 @@ function buildPayload() {
     p.sampler = "euler"; p.scheduler = "normal"; p.cfg = 5; p.clip_skip = 1;
   }
   if ($("inpaintOn").checked && MASK_IMAGE) {
-    p.inpaint = { mask_image: MASK_IMAGE, keep_face: $("keepFace").checked };
+    p.inpaint = {
+      mask_image: MASK_IMAGE,
+      keep_face: $("keepFace").checked,
+      pose_lock: $("poseLock").checked,
+      skin_keep: $("skinKeep").checked,
+    };
   }
   return p;
 }

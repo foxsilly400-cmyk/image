@@ -669,9 +669,34 @@ def build_workflow(p):
         # LoadImage 输出 [1] = MASK（alpha 通道），直接用，无需 ImageToMask
         nodes["enc_i"] = {"class_type": "VAEEncodeForInpaint",
                           "inputs": {"pixels": ["src", 0], "vae": vae_ref,
-                                     "mask": ["mask_im", 1], "grow_mask_by": 8}}
+                                     "mask": ["mask_im", 1], "grow_mask_by": 14}}
         latent_ref, ks_denoise = ["enc_i", 0], 1.0
         inpaint_active = True
+        # 姿势锁定：DW 骨架 → OpenPose ControlNet（防止重绘改变姿势/身体结构）
+        if inpaint.get("pose_lock", True):
+            nodes["dw"] = {"class_type": "DWPreprocessor",
+                           "inputs": {"image": ["src", 0],
+                                      "pose_estimator": "dw-ll_ucoco_384.onnx",
+                                      "bbox_detector": "yolox_l.onnx"}}
+            nodes["cn_pose"] = {"class_type": "ControlNetLoader",
+                                "inputs": {"control_net_name": "xinsir-controlnet-openpose-sdxl-1.0.safetensors"}}
+            nodes["cn_apply_pose"] = {"class_type": "ControlNetApplyAdvanced",
+                                      "inputs": {"positive": pos_ref, "negative": neg_ref,
+                                                 "control_net": ["cn_pose", 0], "image": ["dw", 0],
+                                                 "strength": 0.85, "start_percent": 0.0, "end_percent": 1.0}}
+            pos_ref, neg_ref = ["cn_apply_pose", 0], ["cn_apply_pose", 1]
+        # 肤色保持：IPAdapter style transfer（原图作参考，迁移肤色/质感）
+        if inpaint.get("skin_keep", True):
+            nodes["ip_loader"] = {"class_type": "IPAdapterUnifiedLoader",
+                                  "inputs": {"model": cur_model, "preset": "PLUS (high strength)"}}
+            nodes["ip_adv"] = {"class_type": "IPAdapterAdvanced",
+                               "inputs": {"model": ["ip_loader", 0], "ipadapter": ["ip_loader", 1],
+                                          "image": ["src", 0], "weight": 0.5,
+                                          "weight_type": "linear",
+                                          "combine_embeds": "concat",
+                                          "start_at": 0.0, "end_at": 1.0,
+                                          "embeds_scaling": "V only"}}
+            cur_model = ["ip_adv", 0]
     elif src_image:
         # img2img：参考图编码为 latent，用 denoise 控制重绘幅度
         nodes["src"] = {"class_type": "LoadImage", "inputs": {"image": src_image}}
