@@ -7,6 +7,7 @@ const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const PORT = 6008;
 const CONFIG = path.join(__dirname, 'current.json');
@@ -24,8 +25,50 @@ function save() {
   fs.writeFileSync(CONFIG, JSON.stringify(cfg, null, 2));
 }
 
+function cors(headers) {
+  return Object.assign({}, headers, {
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'POST, GET, OPTIONS',
+    'access-control-allow-headers': 'content-type',
+    'access-control-allow-private-network': 'true'
+  });
+}
+
 const server = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://127.0.0.1');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, cors({}));
+    res.end();
+    return;
+  }
+
+  // 实例复位：接收入口页提交的 ssh 信息 → 跑 reset_instance.py 全链路
+  // （更新 app.py/target.json/current.json + git push + SSH 远端恢复）
+  if (u.pathname === '/__instance' && req.method === 'POST') {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      let text = '';
+      try { text = (JSON.parse(body).text || '').trim(); } catch (e) { text = ''; }
+      if (!text || !/^ssh\s+-p\s+\d+/.test(text)) {
+        res.writeHead(400, cors({ 'content-type': 'text/plain; charset=utf-8' }));
+        res.end('格式错误，示例:\n  ssh -p 25562 root@host 密码 https://公网:8443\n');
+        return;
+      }
+      const script = path.join(__dirname, '..', '..', 'scripts', 'reset_instance.py');
+      res.writeHead(200, cors({ 'content-type': 'text/plain; charset=utf-8' }));
+      const py = spawn('python', [script, text], {
+        windowsHide: true,
+        env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
+      });
+      py.stdout.on('data', (d) => res.write(d));
+      py.stderr.on('data', (d) => res.write(d));
+      py.on('close', (code) => { res.end('\n[exit ' + code + ']\n'); });
+      py.on('error', (e) => { res.end('\n[spawn error] ' + e.message + '\n'); });
+    });
+    return;
+  }
 
   if (u.pathname === '/__status') {
     res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
