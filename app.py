@@ -67,7 +67,7 @@ ON_SERVER = os.path.exists("/root/autodl-tmp/ComfyUI")
 SERVER_BASE = "/root/autodl-tmp/ComfyUI"
 SSH_KEY = os.path.expanduser(r"~/.ssh/id_ed25519")
 SSH_TARGET = "root@connect.westc.seetacloud.com"
-SSH_PORT = "36208"
+SSH_PORT = "25562"
 
 # ---------- 任务队列 ----------
 TASKS = {}  # id -> {status, payload, images, error, created}
@@ -128,7 +128,7 @@ def cors(resp):
     return resp
 
 
-SERVER_PUBLIC = "https://u1139344-b01e-c23b1b75.westc.seetacloud.com:8443"
+SERVER_PUBLIC = "https://u1139344-8e64-c621ed69.westc.seetacloud.com:8443"
 
 
 @app.route("/api/favs", methods=["GET", "POST", "OPTIONS"])
@@ -720,6 +720,25 @@ def api_tasks():
                  for tid, t in TASKS.items()]
     items.sort(key=lambda x: x["created"], reverse=True)
     return jsonify({"ok": True, "tasks": items[:50]})
+
+
+@app.route("/api/instance", methods=["POST"])
+def api_instance():
+    """保存新实例 SSH/公网信息（切换实例后复位工作台用）"""
+    data = request.get_json(force=True)
+    text = (data.get("text") or "").strip()
+    m = re.match(r"ssh\s+-p\s+(\d+)\s+(\S+@\S+)\s+(\S+)\s+(https?://\S+)", text)
+    if not m:
+        return jsonify({"ok": False,
+                        "error": "格式无法解析，示例：ssh -p 25562 root@connect.westc.seetacloud.com 密码 https://公网:8443"})
+    port, host, pwd, url = m.groups()
+    info = {"ssh_port": port, "ssh_host": host, "ssh_password": pwd,
+            "public_url": url, "updated": time.strftime("%Y-%m-%d %H:%M:%S")}
+    with open("/root/autodl-tmp/instance.json", "w", encoding="utf-8") as f:
+        json.dump(info, f, ensure_ascii=False, indent=1)
+    return jsonify({"ok": True,
+                    "instance": {"ssh_port": port, "ssh_host": host, "public_url": url},
+                    "note": "已保存。固定入口与本地网关由本地复位脚本同步（scripts/reset_instance.py）"})
 
 
 @app.route("/api/cancel", methods=["POST"])
