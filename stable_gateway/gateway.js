@@ -58,7 +58,7 @@ const server = http.createServer((req, res) => {
       }
       const script = path.join(__dirname, '..', 'scripts', 'reset_instance.py');
       res.writeHead(200, cors({ 'content-type': 'text/plain; charset=utf-8' }));
-      const py = spawn('python', [script, text], {
+      const py = spawn('python', ['-u', script, text], {
         windowsHide: true,
         env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' })
       });
