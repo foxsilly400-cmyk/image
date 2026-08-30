@@ -32,7 +32,10 @@
   <details class="reset-box">
     <summary>实例复位（换实例后在这里粘贴新 ssh 信息）</summary>
     <textarea id="resetInput" placeholder="ssh -p 端口 root@host 密码 https://公网:8443"></textarea>
-    <button id="resetBtn" type="button">提交复位</button>
+    <div>
+      <button id="resetBtn" type="button">提交复位</button>
+      <button id="copyBtn" type="button" style="background:#2a2a44;color:#ddd;border:1px solid #555;border-radius:8px;padding:7px 16px;font-size:13px;cursor:pointer;margin-left:8px">复制 ssh 信息</button>
+    </div>
     <pre class="reset-out" id="resetOut"></pre>
   </details>
 </div>
@@ -80,8 +83,19 @@
     setTimeout(function () { countdown(n - 1, done); }, 1000);
   }
 
-  // 实例复位：提交到本地网关 6008（跑 reset_instance.py 全链路）
+  // 实例复位：优先本地网关 6008（本机浏览器）；不可达时给智能指引
   var btn = document.getElementById('resetBtn');
+  var copyBtn = document.getElementById('copyBtn');
+  copyBtn.addEventListener('click', function () {
+    var text = document.getElementById('resetInput').value.trim();
+    if (!text) { document.getElementById('resetOut').textContent = '先粘贴 ssh 信息'; return; }
+    navigator.clipboard.writeText(text).then(function () {
+      copyBtn.textContent = '✓ 已复制';
+      setTimeout(function () { copyBtn.textContent = '复制 ssh 信息'; }, 1500);
+    }).catch(function () {
+      copyBtn.textContent = '复制失败，请手动选中复制';
+    });
+  });
   btn.addEventListener('click', function () {
     var text = document.getElementById('resetInput').value.trim();
     var out = document.getElementById('resetOut');
@@ -95,7 +109,20 @@
     }).then(function (r) { return r.text(); })
       .then(function (t) { out.textContent = t; })
       .catch(function (e) {
-        out.textContent = '本地网关不可达（' + e.message + '）\n请直接把 ssh 信息发给故障甄虹人，由我来跑复位。';
+        out.textContent = '本地网关不可达（' + e.message + '）';
+        // 网关不可达：尝试探测目标实例是否在线，给下一步指引
+        fetch(target + '/api/checkpoints', { cache: 'no-store' })
+          .then(function (r) {
+            if (r.status === 401) return null;
+            if (r.ok) return r.json();
+            throw new Error('http ' + r.status);
+          })
+          .then(function () {
+            out.textContent += '\n目标实例在线 → 点上方按钮进入工作台，在页面底部「实例复位」面板提交（服务器自助恢复，不需要本地网关）。';
+          })
+          .catch(function () {
+            out.textContent += '\n目标实例也不可达。请用本机 Chrome/Edge 打开本页提交；或点「复制 ssh 信息」发给故障甄虹人。';
+          });
       })
       .then(function () { btn.disabled = false; });
   });

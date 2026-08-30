@@ -129,6 +129,13 @@
 
       <button class="btn-primary" id="genBtn">生成</button>
       <div class="status" id="status"></div>
+
+      <details id="instPanel" style="margin-top:14px">
+        <summary style="font-size:12px;color:#9a9ab8;cursor:pointer;user-select:none">🔧 实例复位（换实例后粘贴新 ssh 信息，服务器自助恢复，无需本地网关）</summary>
+        <textarea id="instInput" style="width:100%;box-sizing:border-box;margin-top:8px;background:#1b1b2f;color:#eee;border:1px solid #3a3a5c;border-radius:8px;padding:8px;font-size:12px;min-height:54px;font-family:ui-monospace,Consolas,monospace" placeholder="ssh -p 端口 root@host 密码 https://公网:8443"></textarea>
+        <button type="button" id="instBtn" style="margin-top:8px;background:#3d4fa8;color:#fff;border:0;border-radius:8px;padding:7px 16px;font-size:13px;cursor:pointer">提交复位</button>
+        <pre id="instOut" style="margin-top:8px;background:#14142a;border:1px solid #2c2c4a;border-radius:8px;padding:8px;font-size:11px;color:#b8b8d8;white-space:pre-wrap;word-break:break-all;min-height:18px;max-height:220px;overflow-y:auto"></pre>
+      </details>
     </aside>
 
     <section class="results page-imgs">

@@ -518,6 +518,48 @@ async function submitGen() {
 
 $("genBtn").onclick = submitGen;
 
+// ---------- 实例复位（服务器自助，无需本地网关） ----------
+let instTimer = null;
+
+$("instBtn").onclick = async () => {
+  const text = $("instInput").value.trim();
+  const out = $("instOut");
+  if (!text) { out.textContent = "先粘贴 ssh 信息"; return; }
+  $("instBtn").disabled = true;
+  out.textContent = "提交复位…";
+  try {
+    const r = await api("/api/instance", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    out.textContent = r.ok
+      ? "已保存，后台恢复中（页面会断一下，1-2 分钟自动回来）…\n" + (r.note || "")
+      : "失败: " + (r.error || "");
+    if (r.ok && r.restored) pollInstStatus();
+  } catch (e) {
+    out.textContent = "提交失败: " + e.message;
+  }
+  $("instBtn").disabled = false;
+};
+
+async function pollInstStatus() {
+  try {
+    const r = await api("/api/instance/status");
+    if (!r.ok) return;
+    const out = $("instOut");
+    out.textContent = (r.log || "").trim() || "恢复中…";
+    if (r.alive && /\[OK\]/.test(r.log || "")) {
+      out.textContent += "\n\n✅ 服务已恢复，可正常生成";
+      return;
+    }
+    if (/\[WARN\]|\[FATAL\]/.test(r.log || "")) return;  // 恢复失败，停在日志
+  } catch (e) {
+    // 恢复期间 genui 被重启，连接会断，属正常，继续轮询
+    if (/\[OK\]/.test(out.textContent)) return;
+  }
+  instTimer = setTimeout(pollInstStatus, 4000);
+}
+
 // ---------- 自然语言转 tag ----------
 $("nlBtn").onclick = async () => {
   const desc = prompt("输入自然语言描述（如：害羞的绿发女孩穿着连衣裙看向观众）", "");

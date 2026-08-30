@@ -899,7 +899,7 @@ def api_tasks():
 
 @app.route("/api/instance", methods=["POST"])
 def api_instance():
-    """保存新实例 SSH/公网信息（切换实例后复位工作台用）"""
+    """保存新实例 SSH/公网信息；服务器直跑模式顺手后台执行恢复脚本（自助复位，无需本地网关）"""
     data = request.get_json(force=True)
     text = (data.get("text") or "").strip()
     m = re.match(r"ssh\s+-p\s+(\d+)\s+(\S+@\S+)\s+(\S+)\s+(https?://\S+)", text)
@@ -909,11 +909,54 @@ def api_instance():
     port, host, pwd, url = m.groups()
     info = {"ssh_port": port, "ssh_host": host, "ssh_password": pwd,
             "public_url": url, "updated": time.strftime("%Y-%m-%d %H:%M:%S")}
-    with open("/root/autodl-tmp/instance.json", "w", encoding="utf-8") as f:
-        json.dump(info, f, ensure_ascii=False, indent=1)
-    return jsonify({"ok": True,
+    try:
+        with open("/root/autodl-tmp/instance.json", "w", encoding="utf-8") as f:
+            json.dump(info, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        return jsonify({"ok": False, "error": "保存失败: %s" % e})
+    restored = False
+    if ON_SERVER and os.path.exists("/root/autodl-tmp/restore_after_boot.sh"):
+        # 后台异步恢复（脚本会 pkill 当前 genui，不能在请求进程里同步跑）
+        try:
+            with open("/root/autodl-tmp/restore_auto.log", "w", encoding="utf-8") as f:
+                f.write("恢复开始: %s\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            log_f = open("/root/autodl-tmp/restore_auto.log", "a", encoding="utf-8")
+            subprocess.Popen(["bash", "/root/autodl-tmp/restore_after_boot.sh"],
+                             stdout=log_f, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+            restored = True
+        except Exception as e:
+            print("[instance] 恢复启动失败:", e, flush=True)
+    return jsonify({"ok": True, "restored": restored,
                     "instance": {"ssh_port": port, "ssh_host": host, "public_url": url},
-                    "note": "已保存。固定入口与本地网关由本地复位脚本同步（scripts/reset_instance.py）"})
+                    "note": ("已保存，后台恢复服务中（约 1-2 分钟），恢复期间页面会断一下，完成后自动回来"
+                             if restored else
+                             "已保存。固定入口与本地网关由本地复位脚本同步（scripts/reset_instance.py）")})
+
+
+@app.route("/api/instance/status")
+def api_instance_status():
+    """自助复位进度：instance.json + 恢复日志尾部 + 服务存活状态"""
+    info = {}
+    try:
+        with open("/root/autodl-tmp/instance.json", encoding="utf-8") as f:
+            info = json.load(f)
+    except Exception:
+        pass
+    log = ""
+    try:
+        with open("/root/autodl-tmp/restore_auto.log", encoding="utf-8") as f:
+            log = f.read()[-4000:]
+    except Exception:
+        pass
+    alive = False
+    if ON_SERVER:
+        try:
+            comfy_get("/system_stats")
+            alive = True
+        except Exception:
+            alive = False
+    return jsonify({"ok": True, "instance": info, "log": log, "alive": alive})
 
 
 @app.route("/api/cancel", methods=["POST"])
