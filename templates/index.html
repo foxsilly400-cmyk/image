@@ -38,7 +38,8 @@
       </section>
 
       <section class="card">
-        <h3>img2img 参考图</h3>
+        <h3 id="i2iToggle" style="cursor:pointer;user-select:none" title="点击收起/展开">img2img 参考图 <span id="i2iArrow" style="font-size:11px;color:#888"></span></h3>
+        <div id="i2iBody">
         <label class="checkline">
           <input type="checkbox" id="i2iOn">
           <span>使用参考图重绘（img2img）</span>
@@ -77,6 +78,7 @@
         <label style="margin-top:8px">重绘幅度 (denoise，越高越偏离原图)
           <input id="denoise" type="number" value="0.5" step="0.05" min="0.1" max="1">
         </label>
+        </div>
       </section>
 
       <section class="card">
@@ -168,6 +170,6 @@
   <div id="favList" class="fav-list"></div>
 </div>
 
-<script src="/static/app.js?v=20260830a"></script>
+<script src="/static/app.js?v=20260830b"></script>
 </body>
 </html>

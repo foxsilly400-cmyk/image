@@ -594,8 +594,9 @@ function currentTag() {
   const v = promptEl.value;
   const pos = promptEl.selectionStart ?? v.length;
   const before = v.slice(0, pos);
-  const lastComma = before.lastIndexOf(",");
-  let start = lastComma + 1;
+  // 逗号和换行都是词段分隔符（取靠后的那个，防止换行被算进当前词）
+  const lastSep = Math.max(before.lastIndexOf(","), before.lastIndexOf("\n"));
+  let start = lastSep + 1;
   while (start < before.length && v[start] === " ") start++;
   const cur = before.slice(start);
   return { cur, start };
@@ -605,7 +606,7 @@ let suggestStart = -1;  // fetchSuggest 成功时记录的当前词起点（防�
 
 async function fetchSuggest() {
   const { cur, start } = currentTag();
-  if (!cur || cur.length < 1 || /[()]/.test(cur)) {
+  if (!cur || cur.length < 1 || /[()]/.test(cur) || cur.includes("\n")) {
     suggestStart = -1;
     suggestBox.style.display = "none";
     return;
@@ -650,13 +651,12 @@ function pickSuggest(i) {
   // 用联想请求时记录的词起点；异常时回退到 currentTag
   let start = suggestStart;
   if (start < 0 || start > v.length) start = currentTag().start;
-  // 从起点到下一个逗号/末尾 = 整个当前词段（无论光标在哪都整体替换，避免残留）
+  // 从起点到下一个分隔符（逗号或换行）/末尾 = 整个当前词段（无论光标在哪都整体替换，避免残留）
   let end = start;
-  while (end < v.length && v[end] !== ",") end++;
-  let e2 = end;
-  while (e2 > start && v[e2 - 1] === " ") e2--;
+  while (end < v.length && v[end] !== "," && v[end] !== "\n") end++;
   const after = v.slice(end);
-  const sep = after ? (after.startsWith(",") ? after : ", " + after) : "";
+  // 词段后是分隔符（逗号/换行）就原样保留，否则补 ", "，绝不吞掉后面的内容
+  const sep = after ? (after.startsWith(",") || after.startsWith("\n") ? after : ", " + after) : "";
   promptEl.value = v.slice(0, start) + suggestItems[i] + sep;
   const np = start + suggestItems[i].length + 1;
   promptEl.setSelectionRange(np, np);
@@ -767,6 +767,19 @@ async function autoMask(mode) {
   }
   return r;
 }
+
+// ---------- img2img 卡片收起/展开（默认收起，点开全部显示，状态持久化） ----------
+function applyI2iCollapse() {
+  const collapsed = localStorage.getItem("i2iCollapsed") !== "0";
+  $("i2iBody").style.display = collapsed ? "none" : "block";
+  $("i2iArrow").textContent = collapsed ? "▸" : "▾";
+}
+applyI2iCollapse();
+$("i2iToggle").onclick = () => {
+  const collapsed = localStorage.getItem("i2iCollapsed") !== "0";
+  localStorage.setItem("i2iCollapsed", collapsed ? "0" : "1");
+  applyI2iCollapse();
+};
 
 $("autoUndress").onclick = async () => {
   if (!REF_IMAGE) { $("status").textContent = "请先上传参考图"; return; }
