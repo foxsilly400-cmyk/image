@@ -67,7 +67,7 @@ ON_SERVER = os.path.exists("/root/autodl-tmp/ComfyUI")
 SERVER_BASE = "/root/autodl-tmp/ComfyUI"
 SSH_KEY = os.path.expanduser(r"~/.ssh/id_ed25519")
 SSH_TARGET = "connect.westc.seetacloud.com"
-SSH_PORT = "25562"
+SSH_PORT = "36208"
 
 # ---------- 任务队列 ----------
 TASKS = {}  # id -> {status, payload, images, error, created}
@@ -128,7 +128,7 @@ def cors(resp):
     return resp
 
 
-SERVER_PUBLIC = "https://u1139344-8e64-c621ed69.westc.seetacloud.com:8443"
+SERVER_PUBLIC = "https://u1139344-b01e-c23b1b75.westc.seetacloud.com:8443"
 
 
 @app.route("/api/favs", methods=["GET", "POST", "OPTIONS"])
